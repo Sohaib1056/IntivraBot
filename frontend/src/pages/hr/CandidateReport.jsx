@@ -126,6 +126,13 @@ function Report({ application, interview }) {
   const screenshots = interview?.screenshots || []
   const flaggedShots = screenshots.filter((s) => (s.findings || []).length > 0)
 
+  // Webcam stills of the candidate themselves. The identity numbers below are
+  // only as convincing as the pictures behind them — "41% match" is an
+  // accusation nobody can check without seeing who was actually on camera.
+  const faceShots = interview?.faceShots || []
+  const referenceShot = faceShots.find((s) => s.kind === 'reference')
+  const violationShots = faceShots.filter((s) => s.kind === 'violation')
+
   // Gaze: reported as a proportion, never as a raw count — "38 frames looking
   // away" means nothing without knowing how many there were in total.
   const gazeTotal = interview?.gazeTotalFrames ?? 0
@@ -519,6 +526,128 @@ function Report({ application, interview }) {
               )}
             </CardBody>
           </Card>
+
+          {/* Who was actually on camera. Until this existed the report showed
+              the candidate's own uploaded profile photo beside an identity
+              score computed from frames nobody could see — so an employer
+              could neither confirm a match nor question a mismatch. */}
+          {faceShots.length > 0 && (
+            <Card>
+              <CardHeader
+                title="Who took this interview"
+                subtitle={
+                  violationShots.length
+                    ? `${faceShots.length} webcam stills — ${violationShots.length} captured at a warning`
+                    : `${faceShots.length} webcam stills from the interview`
+                }
+              />
+              <CardBody>
+                {/* Profile photo beside the first frame of the interview: the
+                    single comparison an employer most wants to make, side by
+                    side rather than from a number. */}
+                {referenceShot && (
+                  <div className="mb-4 flex flex-wrap items-start gap-4 rounded-xl border border-ink-200 bg-ink-50 p-3">
+                    <div className="text-center">
+                      {c.photoUrl && !photoBroken ? (
+                        <img
+                          src={c.photoUrl}
+                          alt="Profile"
+                          onError={() => setPhotoBroken(true)}
+                          className="h-24 w-24 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-24 w-24 items-center justify-center rounded-lg bg-ink-200 text-lg font-bold text-ink-600">
+                          {initials(c.name)}
+                        </div>
+                      )}
+                      <p className="mt-1 text-[11px] font-medium text-ink-500">Profile photo</p>
+                    </div>
+                    <div className="text-center">
+                      <a href={referenceShot.url} target="_blank" rel="noreferrer">
+                        <img
+                          src={referenceShot.url}
+                          alt="First frame of the interview"
+                          className="h-24 w-24 rounded-lg object-cover transition hover:opacity-90"
+                        />
+                      </a>
+                      <p className="mt-1 text-[11px] font-medium text-ink-500">On camera</p>
+                    </div>
+                    {referenceShot.matchScore != null && (
+                      <div className="flex-1 self-center">
+                        <Badge tone={referenceShot.matched === false ? 'red' : 'green'}>
+                          {referenceShot.matchScore}% identity match
+                        </Badge>
+                        <p className="mt-1.5 text-xs text-ink-500">
+                          {referenceShot.matched === false
+                            ? 'The person on camera did not match the profile photo.'
+                            : 'The person on camera matched the profile photo.'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                  {faceShots.map((s, i) => {
+                    const flagged = s.kind === 'violation'
+                    return (
+                      <a
+                        key={i}
+                        href={s.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={
+                          flagged
+                            ? `Captured when "${(s.violationType || '').replace(/_/g, ' ')}" was detected`
+                            : 'Open full size'
+                        }
+                        className={cn(
+                          'relative overflow-hidden rounded-lg border-2 transition',
+                          flagged ? 'border-red-400' : 'border-ink-200 hover:border-ink-300'
+                        )}
+                      >
+                        <img
+                          src={s.url}
+                          alt={`Candidate at ${s.atSeconds}s`}
+                          loading="lazy"
+                          className="aspect-square w-full object-cover"
+                        />
+                        <span className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+                          {Math.floor((s.atSeconds || 0) / 60)}m
+                          {String((s.atSeconds || 0) % 60).padStart(2, '0')}s
+                          {s.matchScore != null ? ` · ${s.matchScore}%` : ''}
+                        </span>
+                        {flagged && (
+                          <span className="absolute right-1 top-1 rounded bg-red-600 px-1 py-0.5 text-[9px] font-bold text-white">
+                            {(s.violationType || 'flag').replace(/_/g, ' ')}
+                          </span>
+                        )}
+                      </a>
+                    )
+                  })}
+                </div>
+
+                {violationShots.length > 0 && (
+                  <ul className="mt-3 space-y-1.5 border-t border-ink-100 pt-3">
+                    {violationShots.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-ink-600">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />
+                        <span>
+                          <strong className="text-ink-800">
+                            {Math.floor((s.atSeconds || 0) / 60)}m
+                            {String((s.atSeconds || 0) % 60).padStart(2, '0')}s
+                          </strong>
+                          {' — '}
+                          {(s.violationType || '').replace(/_/g, ' ')}
+                          {s.order ? ` (during question ${s.order})` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardBody>
+            </Card>
+          )}
 
           {/* Screen timeline. Every capture is here, not only the flagged ones:
               an employer judging someone on a flag deserves to see the screen

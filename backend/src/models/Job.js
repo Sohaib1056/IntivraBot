@@ -66,9 +66,13 @@ const jobSchema = new Schema(
     // spoken, answers expected. Roman Urdu is listed separately from Urdu on
     // purpose: most Pakistani candidates read and write it far faster than the
     // script, and speech recognition handles it as Urdu audio either way.
+    // 'Both' means a natural English/Roman-Urdu mix, which is how bilingual
+    // Pakistani interviews actually run — the candidate answers in whichever
+    // they reach for, and neither is marked down. See _LANGUAGE_LINES in
+    // ai-services/app/core/interview.py.
     language: {
       type: String,
-      enum: ['English', 'Urdu', 'Roman Urdu'],
+      enum: ['English', 'Urdu', 'Roman Urdu', 'Both'],
       default: 'English',
     },
     // Whether candidates may type their answers instead of speaking them.
@@ -91,7 +95,18 @@ const jobSchema = new Schema(
 )
 
 // Text index powers keyword search across title, skills and company.
-jobSchema.index({ title: 'text', skills: 'text', company: 'text', department: 'text' })
+//
+// `language_override` is REQUIRED here, not optional tuning. On a collection
+// with a text index, MongoDB treats a field literally named `language` as the
+// per-document stemming language and rejects any value outside its own list —
+// so saving a job with language 'Roman Urdu' failed with
+// "language override unsupported: Roman Urdu" at insert time, long after every
+// Mongoose and zod validation had passed. Pointing the override at a field name
+// nothing uses leaves our `language` free to mean what we mean by it.
+jobSchema.index(
+  { title: 'text', skills: 'text', company: 'text', department: 'text' },
+  { language_override: 'textSearchLanguage' }
+)
 
 jobSchema.set('toJSON', {
   transform(_doc, ret) {

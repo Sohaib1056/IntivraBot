@@ -68,8 +68,11 @@ export const updateMeSchema = z.object({
       departments: z.string().trim().max(200).optional(),
       applyThreshold: z.number().min(0).max(100).optional(),
       passThreshold: z.number().min(0).max(100).optional(),
-      language: z.enum(['English', 'Urdu', 'Both']).optional(),
+      // Interview language — mirrors Job.language, not the interface
+      // preference in `settings` below (which has its own "Both" option).
+      language: z.enum(['English', 'Urdu', 'Roman Urdu', 'Both']).optional(),
       questionsPerInterview: z.number().min(3).max(15).optional(),
+      minutesPerQuestion: z.number().min(1).max(15).optional(),
     })
     .optional(),
   settings: z

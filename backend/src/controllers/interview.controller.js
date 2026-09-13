@@ -29,6 +29,57 @@ async function getBaselineB64(photoUrl) {
   }
 }
 
+// How often a webcam still is kept for the report. Frames arrive every few
+// seconds; saving them all would be thousands of uploads for one interview and
+// tells an employer nothing a handful doesn't. This is the timeline spacing.
+const FACE_SHOT_INTERVAL_MS = 90 * 1000
+// A hard ceiling regardless of length, so a very long interview cannot fill
+// storage on its own. Reference and violation frames are exempt — those are
+// evidence, not timeline.
+const FACE_SHOT_MAX = 20
+
+// Save one webcam still to Cloudinary and attach it to the interview.
+//
+// Failure here is always silent: a missing picture is worth far less than an
+// interview interrupted because image storage had a bad minute.
+async function saveFaceShot(interview, frameB64, { kind, order, matchScore, matched, faceCount, violationType = '' }) {
+  if (!cloudinaryEnabled || interview.isPractice) return null
+  try {
+    const base64 = String(frameB64).includes(',') ? String(frameB64).split(',')[1] : String(frameB64)
+    const uploaded = await uploadBuffer(Buffer.from(base64, 'base64'), {
+      folder: 'intivrabot/faceshots',
+      resource_type: 'image',
+      // A face only has to be recognisable by a human reviewer, so this is far
+      // smaller than the screen captures — which have to keep text legible.
+      transformation: [{ width: 640, crop: 'limit', quality: 'auto:good' }],
+    })
+    const now = Date.now()
+    const startedAt = interview.startedAt ? new Date(interview.startedAt).getTime() : now
+    await Interview.updateOne(
+      { _id: interview._id },
+      {
+        $push: {
+          faceShots: {
+            url: uploaded.secure_url,
+            publicId: uploaded.public_id,
+            order,
+            atSeconds: Math.max(0, Math.round((now - startedAt) / 1000)),
+            matchScore: matchScore ?? null,
+            matched: matched ?? null,
+            faceCount: faceCount ?? 0,
+            kind,
+            violationType,
+            at: new Date(),
+          },
+        },
+      }
+    )
+    return uploaded.secure_url
+  } catch {
+    return null
+  }
+}
+
 const FALLBACK_Q = [
   'Tell us briefly about yourself and your background.',
   'Describe a challenging project you worked on and your role in it.',
@@ -52,6 +103,16 @@ const SECONDS_PER_QUESTION = 240
 
 // Has the candidate been gone longer than the grace period?
 function isAbandoned(interview) {
+  // Nothing can be abandoned before it begins. The record is created by
+  // /start, but the interview itself only starts once the candidate clears the
+  // pre-check — and that screen legitimately takes a while: granting camera and
+  // microphone permission, testing levels, picking a screen to share, reading
+  // the terms. A candidate who spent six minutes there, or who opened the page,
+  // stepped away and came back to set up properly, was told they had "left
+  // their interview" and had their one attempt closed at zero — for an
+  // interview that had never asked them a single question.
+  if (!interview.startedAt) return false
+
   const last = interview.lastSeenAt || interview.updatedAt || interview.createdAt
   return Date.now() - new Date(last).getTime() > GRACE_MS
 }
@@ -69,7 +130,15 @@ function isTimedOut(interview) {
 // Seconds left before the interview closes itself, for the countdown. Before
 // the pre-check is done this is the full budget: nothing has been used yet.
 function secondsLeft(interview) {
-  if (!interview.timeLimitSeconds) return null
+  // null means "untimed", which the candidate's UI renders as an infinity
+  // symbol. Only practice runs are genuinely untimed — a real interview
+  // reaching here with no budget is one created before minutesPerQuestion
+  // existed, and showing it as unlimited both misleads the candidate and
+  // removes the deadline the employer set. Fall back to the standard budget.
+  if (!interview.timeLimitSeconds) {
+    if (interview.isPractice) return null
+    return (interview.totalQuestions || 5) * SECONDS_PER_QUESTION
+  }
   if (!interview.startedAt) return interview.timeLimitSeconds
   const started = new Date(interview.startedAt).getTime()
   const left = interview.timeLimitSeconds - Math.floor((Date.now() - started) / 1000)
@@ -203,6 +272,28 @@ export const start = asyncHandler(async (req, res) => {
   const job = application.job
   if (!job) throw new AppError(404, 'Job not found for this application')
 
+  // Identity enrolment is required to sit a real interview.
+  //
+  // The pre-check screen blocks this too, but that is a courtesy, not the
+  // control: this endpoint is reachable directly, and the whole point of the
+  // rule is that it cannot be skipped by whoever is trying to skip it. Without
+  // a photo and a voiceprint there is nothing to compare the candidate to, so
+  // every identity check passes vacuously and the employer receives a report
+  // that looks verified but proves nothing.
+  //
+  // Only enforced for real interviews — practice has no employer to mislead.
+  const me = await User.findById(req.user._id).select('photoUrl +profile.voiceRef').lean()
+  const missing = []
+  if (!me?.photoUrl) missing.push('a profile photo')
+  if (!me?.profile?.voiceRef?.length) missing.push('a voiceprint')
+  if (missing.length) {
+    throw new AppError(
+      403,
+      `This interview is verified against your profile, but you have not added ${missing.join(' or ')}. ` +
+      'Add this from your profile page, then start the interview.'
+    )
+  }
+
   // Resume an in-progress interview instead of starting a duplicate — but only
   // if they are actually coming back to it, not returning hours later with the
   // question researched. Whichever way it ended, it is scored and closed, and
@@ -292,6 +383,11 @@ export const start = asyncHandler(async (req, res) => {
           resumed: true,
           interview: existing,
           currentQuestion: existing.questions[existing.currentIndex],
+          // Was missing on this path, unlike the other resumes: losing a race
+          // to a concurrent /start left the candidate's clock reading
+          // "unlimited" for the whole interview, while the server went on
+          // enforcing the real deadline underneath.
+          secondsLeft: secondsLeft(existing),
           ...(await aiFlags()),
           ...policyOf(existing),
         })
@@ -329,6 +425,10 @@ export const startPractice = asyncHandler(async (req, res) => {
       resumed: true,
       interview,
       currentQuestion: interview.questions[interview.currentIndex],
+      // Practice is genuinely untimed, so this is null here — sent anyway so
+      // every start/resume response has the same shape and the UI never falls
+      // back to a stale value from a previous interview.
+      secondsLeft: secondsLeft(interview),
       ...(await aiFlags()),
       ...policyOf(interview),
     })
@@ -364,6 +464,11 @@ export const startPractice = asyncHandler(async (req, res) => {
           resumed: true,
           interview: existing,
           currentQuestion: existing.questions[existing.currentIndex],
+          // Was missing on this path, unlike the other resumes: losing a race
+          // to a concurrent /start left the candidate's clock reading
+          // "unlimited" for the whole interview, while the server went on
+          // enforcing the real deadline underneath.
+          secondsLeft: secondsLeft(existing),
           ...(await aiFlags()),
           ...policyOf(existing),
         })
@@ -385,7 +490,12 @@ export const startPractice = asyncHandler(async (req, res) => {
 
 // POST /api/interviews/:id/voice  — analyse one answer's audio (speaker + multi-voice)
 export const voice = asyncHandler(async (req, res) => {
-  const { audio, sampleRate } = req.body
+  // `passive` marks a clip taken by the background monitor rather than one the
+  // candidate submitted as an answer. It is never allowed to define the
+  // reference voiceprint: the monitor deliberately listens when the candidate
+  // is NOT speaking, so enrolling from it could make a bystander's voice the
+  // one every later answer is judged against.
+  const { audio, sampleRate, passive } = req.body
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError(400, 'Invalid interview id')
   if (!audio) throw new AppError(400, 'No audio provided')
 
@@ -424,6 +534,7 @@ export const voice = asyncHandler(async (req, res) => {
   // only a clean clip may define it. Enrolling from a noisy first answer used
   // to mis-score the whole interview.
   const enrollNow =
+    !passive &&
     !interview.voiceRef?.length && Array.isArray(result.embedding) && result.enrollable !== false
 
   // Atomic append, for the same reason as the frame handler: these arrive
@@ -472,6 +583,142 @@ export const voice = asyncHandler(async (req, res) => {
   })
 })
 
+// POST /api/interviews/voice-check — verify the speaker BEFORE the interview.
+//
+// The pre-check used to pass on hearing any sound at all, so a candidate could
+// hold a phone to the microphone, or have someone else say "testing one two
+// three", and the check went green. It confirmed a working microphone and
+// nothing about who was sitting there.
+//
+// This compares the clip against the voiceprint they enrolled on their profile,
+// which is the only thing that makes the check mean anything. Deliberately not
+// tied to an interview id: at this point no interview has started.
+export const voiceCheck = asyncHandler(async (req, res) => {
+  const { audio, sampleRate } = req.body
+  if (!audio) throw new AppError(400, 'No audio provided')
+
+  const user = await User.findById(req.user._id).select('+profile.voiceRef').lean()
+  const ref = user?.profile?.voiceRef?.length ? user.profile.voiceRef : null
+
+  // Nothing to compare against. The candidate is not at fault — they simply
+  // never enrolled — so the microphone still passes on hearing them, and the
+  // response says why verification was skipped rather than claiming a match.
+  if (!ref) {
+    const result = await aiService.voiceAnalyze(audio, sampleRate || 16000, undefined)
+    return res.json({
+      success: true,
+      ok: Boolean(result?.ok),
+      enrolled: false,
+      heard: Boolean(result?.ok),
+      reason: 'not_enrolled',
+    })
+  }
+
+  const result = await aiService.voiceAnalyze(audio, sampleRate || 16000, ref)
+  if (!result?.ok) {
+    // Two very different failures used to look identical here, and the caller
+    // passed the candidate on both. They are separated so the page can retry
+    // the one that is the candidate's to fix and only wave through our own
+    // outage:
+    //
+    //   'too_short' etc. — the CLIP was unusable. Retryable; must not pass, or
+    //   anyone can satisfy the check with a cough.
+    //   anything else    — the SERVICE failed. Not the candidate's problem.
+    const err = result?.error || 'unavailable'
+    const clipProblem = ['too_short', 'too_quiet', 'clipped', 'unusable'].includes(err)
+    return res.json({
+      success: true,
+      ok: !clipProblem ? false : true,
+      enrolled: true,
+      // A clip problem is reported as a usable:false result rather than a
+      // service failure, which is what it actually is.
+      ...(clipProblem ? { usable: false, matched: null, score: null } : {}),
+      reason: err,
+    })
+  }
+
+  // A clip too quiet, clipped or short to embed cannot be judged either way.
+  const usable = result.quality?.usable !== false
+
+  res.json({
+    success: true,
+    ok: true,
+    enrolled: true,
+    usable,
+    matched: usable ? (result.match?.matched ?? null) : null,
+    score: result.match?.score ?? null,
+    multiVoice: Boolean(result.multiVoice),
+  })
+})
+
+// POST /api/interviews/face-check — verify the face BEFORE the interview.
+//
+// The camera card used to go green on the camera merely turning on, exactly as
+// the microphone card used to pass on hearing any sound. A photo held to the
+// lens, or somebody else sitting down, passed it. This matches the frame
+// against the photo on the candidate's profile — the same comparison the
+// interview itself runs on every frame, just moved to where the candidate can
+// still fix it.
+//
+// Like voice-check, deliberately not tied to an interview id: no interview
+// exists yet.
+export const faceCheck = asyncHandler(async (req, res) => {
+  const { frame: frameB64 } = req.body
+  if (!frameB64) throw new AppError(400, 'No frame provided')
+
+  const user = await User.findById(req.user._id).select('photoUrl').lean()
+  const baseline = await getBaselineB64(user?.photoUrl)
+
+  // No profile photo to compare against. Not the candidate's fault, so the
+  // camera still passes and the response says why verification was skipped
+  // rather than claiming a match it never made.
+  if (!baseline) {
+    const result = await aiService.faceAnalyze(frameB64, null)
+    return res.json({
+      success: true,
+      ok: Boolean(result?.ok),
+      enrolled: false,
+      faceCount: result?.faceCount ?? null,
+      reason: 'no_photo',
+    })
+  }
+
+  const result = await aiService.faceAnalyze(frameB64, baseline)
+  if (!result?.ok) {
+    // The face service being down must never lock a candidate out of their own
+    // interview — same fail-open rule as voice-check.
+    return res.json({ success: true, ok: false, enrolled: true, reason: 'unavailable' })
+  }
+
+  // A frame too dark, blurred or small to judge cannot prove a *mismatch* —
+  // see face._frame_quality — so a poor frame never accuses anybody.
+  //
+  // But it can still prove a match. A webcam frame is routinely dimmer or
+  // softer than the posed photo it is compared against, so on quality alone
+  // the honest candidate's frame is often marked unusable; suppressing a clear
+  // match there meant the person who genuinely IS themselves got "we couldn't
+  // confirm it" while the check quietly did nothing. A high score is not
+  // ambiguous whatever the lighting — a dark frame makes scores fall, not rise.
+  const usable = result.quality?.usable !== false
+  const score = result.match?.score ?? null
+  const matched = usable
+    ? (result.match?.matched ?? null)
+    : (score != null && result.match?.matched === true ? true : null)
+
+  res.json({
+    success: true,
+    ok: true,
+    enrolled: true,
+    // Only report the frame as unjudgeable when it actually withheld a verdict.
+    usable: usable || matched === true,
+    faceCount: result.faceCount ?? null,
+    singlePerson: result.singlePerson !== false,
+    matched,
+    score,
+    qualityIssues: result.quality?.issues || [],
+  })
+})
+
 // POST /api/interviews/:id/frame  — analyse one webcam frame (face + emotion)
 export const frame = asyncHandler(async (req, res) => {
   const { frame: frameB64 } = req.body
@@ -517,6 +764,42 @@ export const frame = asyncHandler(async (req, res) => {
     { _id: interview._id },
     { $push: { faceSamples: sample }, $set: { lastSeenAt: new Date() } }
   )
+
+  // Keep the picture, not only the numbers. Which frames are worth keeping:
+  //
+  //  1. The FIRST clear frame — the reference. This is the single most useful
+  //     image in the report: it shows who actually sat down to the interview.
+  //  2. Every so often after that, for a timeline.
+  //
+  // Note this deliberately does NOT gate on `sample.reliable`. That flag says
+  // the frame is too poor to *measure* against a baseline, which is a much
+  // higher bar than being worth looking at: an ordinary webcam frame is
+  // routinely softer than the posed photo it is compared against and comes
+  // back "blurry", so gating on it meant most real interviews saved no
+  // reference picture at all — the one image the report most needs. A human
+  // reviewer can recognise a face in a frame the matcher won't score.
+  //
+  // Only a frame too dark to make anything out is skipped, and the match
+  // numbers shown alongside each still still come from the measurement, so a
+  // soft frame never turns into a confident-looking score.
+  const shots = interview.faceShots || []
+  const tooDark = (result.quality?.issues || []).includes('too_dark')
+  if (!tooDark && result.faceCount > 0) {
+    const hasReference = shots.some((s) => s.kind === 'reference')
+    const lastAt = shots.length ? new Date(shots[shots.length - 1].at).getTime() : 0
+    const due = Date.now() - lastAt > FACE_SHOT_INTERVAL_MS
+    const room = shots.filter((s) => s.kind === 'periodic').length < FACE_SHOT_MAX
+
+    if (!hasReference || (due && room)) {
+      await saveFaceShot(interview, frameB64, {
+        kind: hasReference ? 'periodic' : 'reference',
+        order: sample.order,
+        matchScore: sample.matchScore,
+        matched: sample.matched,
+        faceCount: result.faceCount,
+      })
+    }
+  }
 
   res.json({
     success: true,
@@ -959,7 +1242,7 @@ async function recordViolation(interview, type, { order, extra = '' } = {}) {
 // what is already stored, so suppressing the call can only lose a candidate the
 // warning they would have been given, never earn them a pass.
 export const violation = asyncHandler(async (req, res) => {
-  const { type, order } = req.body
+  const { type, order, frame: frameB64 } = req.body
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError(400, 'Invalid interview id')
   if (!VIOLATION_DETAIL[type]) throw new AppError(400, 'Unknown violation type')
 
@@ -969,6 +1252,19 @@ export const violation = asyncHandler(async (req, res) => {
   if (interview.status === 'completed') throw new AppError(400, 'Interview already completed')
 
   const result = await recordViolation(interview, type, { order })
+
+  // Keep the frame behind the strike when the page sent one. Optional because
+  // several rules here are not visual at all — a stopped screen share or a
+  // switched tab has no picture to take — and because a strike must stand on
+  // the server's own decision whether or not an image came with it.
+  if (frameB64 && result.strike && !result.duplicate && !result.ignored) {
+    await saveFaceShot(interview, frameB64, {
+      kind: 'violation',
+      order: order ?? interview.currentIndex + 1,
+      violationType: type,
+    })
+  }
+
   res.json({ success: true, ...result })
 })
 
@@ -1010,7 +1306,18 @@ export const proctorFrame = asyncHandler(async (req, res) => {
   const raise = async (type, extra) => {
     if (warning) return
     const r = await recordViolation(interview, type, { order, extra })
-    if (r.strike && !r.duplicate && !r.ignored) warning = r
+    if (r.strike && !r.duplicate && !r.ignored) {
+      warning = r
+      // Keep the frame that caused it. A strike described in words alone asks
+      // the employer to take the detection on trust and leaves the candidate
+      // nothing to contest — this is the actual evidence, saved at the moment
+      // it mattered rather than reconstructed afterwards.
+      await saveFaceShot(interview, frameB64, {
+        kind: 'violation',
+        order,
+        violationType: type,
+      })
+    }
   }
 
   // ── Gaze (local, free) ──

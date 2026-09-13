@@ -45,6 +45,10 @@ export const violationSchema = z.object({
     'screen_cheating',
   ]),
   order: z.number().int().min(1).max(100).optional(),
+  // The webcam frame that triggered this, kept as evidence for the report.
+  // Optional: several of the rules above are not visual (a stopped screen
+  // share, a switched tab) and have no picture to send.
+  frame: z.string().optional(),
 })
 
 // Deeper (and costlier) checks over one webcam frame — see the controller.

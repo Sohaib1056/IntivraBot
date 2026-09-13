@@ -63,8 +63,17 @@ const hiringSchema = new Schema(
     departments: { type: String, trim: true },
     applyThreshold: { type: Number, min: 0, max: 100, default: 70 },
     passThreshold: { type: Number, min: 0, max: 100, default: 80 },
-    language: { type: String, enum: ['English', 'Urdu', 'Both'], default: 'English' },
+    // Default interview language for new jobs. Must stay in step with
+    // Job.language — this is what pre-fills that field, so a value allowed
+    // here and rejected there (or the reverse) is a dead end for the employer.
+    language: {
+      type: String,
+      enum: ['English', 'Urdu', 'Roman Urdu', 'Both'],
+      default: 'English',
+    },
     questionsPerInterview: { type: Number, min: 3, max: 15, default: 5 },
+    // Pre-fills the per-question time budget on new jobs; see Job.minutesPerQuestion.
+    minutesPerQuestion: { type: Number, min: 1, max: 15, default: 4 },
   },
   { _id: false }
 )

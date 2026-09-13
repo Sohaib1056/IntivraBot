@@ -33,6 +33,11 @@ _OPENERS = {
         "liye, apne baare mein kuch bataiye aur yeh ke aap recently kis cheez par "
         "kaam kar rahe the?"
     ),
+    "Both": (
+        "Assalam-o-Alaikum, thanks for joining. Shuruaat ke liye, apne baare mein "
+        "thora bataiye — your background, aur recently aap kis project par kaam "
+        "kar rahe the?"
+    ),
 }
 
 
@@ -68,7 +73,150 @@ _LANGUAGE_LINES = {
         "technical words (React, database, API, deploy) stay in English, exactly "
         "as people say them"
     ),
+    # What most Pakistani interviews actually sound like: the interviewer moves
+    # between English and Roman Urdu mid-sentence, and so does the candidate.
+    # Forcing either one on its own makes a bilingual candidate sound worse than
+    # they are — they spend effort translating instead of answering.
+    "Both": (
+        "a natural mix of English and Roman Urdu, the way bilingual Pakistani "
+        "professionals actually speak — switching between the two mid-sentence "
+        "wherever it reads more naturally (e.g. 'Aap ne is project mein "
+        "authentication kaise handle kiya?'). Never use Urdu script. Technical "
+        "terms always stay in English. The candidate may answer in English, in "
+        "Roman Urdu, or in a mix of both, and all three are equally acceptable — "
+        "never penalise or comment on which they chose"
+    ),
 }
+
+
+# A spoken question has to survive being heard once. Past roughly this length
+# the candidate is reconstructing the question instead of answering it, and
+# multi-part questions ("walk me through X, and how did you handle Y, and what
+# about Z") get half-answered — which then scores as a weak answer even though
+# the fault was the question's.
+#
+# Asking for it in the prompt is not enough on its own: models drift over it,
+# especially when the field rubric asks for depth. So it is checked and, when
+# needed, enforced by a second call.
+_MAX_QUESTION_WORDS = 25
+# Allow a little slack before paying for a rewrite — 27 words is not the
+# problem this guard exists to solve, and every rewrite costs a request.
+_QUESTION_WORD_SLACK = 4
+
+
+def _word_count(text: str) -> int:
+    return len([w for w in (text or "").split() if w.strip()])
+
+
+def _first_sentence(text: str) -> str:
+    """The first complete sentence, preferring the first question in the text.
+
+    A long question is nearly always several questions joined together, and the
+    first one is the one worth asking — the rest are the follow-ups a real
+    interviewer would ask afterwards anyway.
+    """
+    text = (text or "").strip()
+    # Prefer cutting at a question mark: that is where the actual question ends.
+    for mark in ("? ", "?\n"):
+        idx = text.find(mark)
+        if idx != -1:
+            return text[: idx + 1].strip()
+    if text.endswith("?") and _word_count(text) <= _MAX_QUESTION_WORDS:
+        return text
+    # Otherwise fall back to the first sentence-ending punctuation.
+    for sep in (". ", "! ", "\n"):
+        idx = text.find(sep)
+        if idx != -1:
+            return text[: idx + 1].strip()
+    return text
+
+
+def _hard_trim(question: str) -> str:
+    """Last resort: cut to the word limit without leaving a dangling clause.
+
+    Only reached when the model has twice failed to produce something short
+    enough, so the choice is between a clipped question and an unusable one.
+    Cutting at the last comma or connective keeps it readable; the question mark
+    is restored so it still reads as a question.
+    """
+    words = question.split()
+    if len(words) <= _MAX_QUESTION_WORDS:
+        return question
+    clipped = " ".join(words[:_MAX_QUESTION_WORDS])
+    # Back off to the last natural break so we don't end mid-clause.
+    for sep in (",", " and", " but", " or", " which", " that"):
+        idx = clipped.rfind(sep)
+        if idx > len(clipped) * 0.5:
+            clipped = clipped[:idx]
+            break
+    # Never end on a word that promises more to come — "…designed from scratch
+    # including?" reads as a broken sentence rather than a question. Drop
+    # trailing connectives until it ends on something that can carry a question
+    # mark.
+    dangling = {
+        "including", "and", "but", "or", "with", "for", "to", "of", "in", "on",
+        "at", "by", "from", "as", "that", "which", "while", "when", "where",
+        "the", "a", "an", "your", "their", "its", "this", "these", "those",
+        "about", "over", "into", "how", "what", "why", "if", "so", "than",
+    }
+    parts = clipped.rstrip(" ,;:-").split()
+    while parts and parts[-1].strip(".,;:-").lower() in dangling:
+        parts.pop()
+    if not parts:
+        return clipped.rstrip(" ,;:-") + "?"
+    return " ".join(parts).rstrip(" ,;:-") + "?"
+
+
+def _enforce_length(question: str, language: str | None) -> str:
+    """Guarantee a question short enough to be asked out loud.
+
+    Four steps, each a fallback for the one before, because asking the model
+    nicely is not a guarantee and the caller needs one:
+      1. Already short enough — nothing to do.
+      2. It is several questions joined up: keep the first.
+      3. Ask the model to rewrite it.
+      4. Cut it in code.
+
+    Step 4 means this NEVER returns something over the limit, which is the
+    whole point: a question the candidate cannot hold in their head produces a
+    half-answer, and that half-answer is then scored as if it were their best.
+    """
+    limit = _MAX_QUESTION_WORDS + _QUESTION_WORD_SLACK
+    if _word_count(question) <= limit:
+        return question
+
+    # 2. Most over-long questions are two or three questions in a row. Taking
+    #    the first is free, needs no model call, and keeps the wording exactly
+    #    as written rather than paraphrasing it.
+    first = _first_sentence(question)
+    if first and _word_count(first) <= limit:
+        return first
+
+    # 3. Genuinely one long sentence — the model has to do the rewriting, since
+    #    cutting mid-clause in code would mangle it.
+    shortened = gemini.generate(
+        "Rewrite this interview question so it can be asked out loud in one "
+        f"breath: at most {_MAX_QUESTION_WORDS} words, one sentence, asking about "
+        "ONE thing only. Keep the same subject and the same difficulty — if it "
+        "asks about several things, keep only the first. Do not add a greeting "
+        "or any preamble.\n"
+        f"Answer in {_language_line(language)}.\n\n"
+        f"Question: {question}\n\n"
+        "Return ONLY the rewritten question.",
+        temperature=0.3,
+    )
+    if shortened:
+        shortened = shortened.strip().strip('"')
+        if _word_count(shortened) <= limit:
+            return shortened
+        # Even the rewrite ran long — its first sentence may still be usable.
+        first = _first_sentence(shortened)
+        if first and _word_count(first) <= limit:
+            return first
+        question = shortened if _word_count(shortened) < _word_count(question) else question
+
+    # 4. Nothing worked. Clip it rather than ask something unanswerable.
+    return _hard_trim(question)
 
 
 def _language_line(language: str | None) -> str:
@@ -152,15 +300,18 @@ def next_question(
             f"Ask ONE interview question (#{number} of {total}). "
             f"Never repeat a question already asked. "
             f"Pitch the difficulty at the candidate's level. "
-            f"Speak it aloud as a person would — plain spoken sentences, no bullet "
-            f"points, no numbered sub-parts, and no more than about 45 words. A "
-            f"question too long to hold in your head is a bad interview question.\n"
+            f"Speak it aloud as a person would — one plain spoken sentence, no bullet "
+            f"points, no numbered sub-parts, and at most {_MAX_QUESTION_WORDS} words. "
+            f"The candidate HEARS this rather than reading it, so a question too long "
+            f"to hold in your head is a bad question however well written. Ask about "
+            f"ONE thing: if you find yourself joining two questions with 'and', drop "
+            f"the second — you can follow up afterwards.\n"
             f"Ask exactly one question, in {_language_line(language)}. "
             f"Return ONLY the question text, no numbering or preamble."
         )
         text = gemini.generate(prompt, temperature=0.8)
         if text:
-            return text.strip().strip('"')
+            return _enforce_length(text.strip().strip('"'), language)
 
     # Offline fallback. Alternates this field's own bank with skill-specific
     # questions, so a network engineer isn't handed developer questions just
@@ -169,14 +320,20 @@ def next_question(
     # Question 1 is always the warm-up, matching the live path above: an
     # interview that opens cold is a worse interview whether or not Gemini
     # happened to be reachable.
+    # Every return below goes through _enforce_length too. The banks are all
+    # well inside the limit today, but nothing stops a future edit from adding
+    # a long one, and "no question is ever too long" has to hold everywhere or
+    # it is not a guarantee.
     if number == 1:
-        return _OPENERS.get(language or "English", _OPENERS["English"])
+        return _enforce_length(
+            _OPENERS.get(language or "English", _OPENERS["English"]), language
+        )
     idx = max(0, number - 1)
     if job_skills and idx % 2 == 1:
         skill = job_skills[(idx // 2) % len(job_skills)]
-        return _skill_question(skill)
+        return _enforce_length(_skill_question(skill), language)
     bank = guide.get("fallbacks") or _GENERIC_QUESTIONS
-    return bank[(idx // 2) % len(bank)]
+    return _enforce_length(bank[(idx // 2) % len(bank)], language)
 
 
 # ── Conversation: understanding what the candidate just said ──
@@ -308,6 +465,11 @@ def converse(
             "\"answer\", and briefly address their aside in \"reply\".\n"
             "Otherwise write what you would actually say out loud: acknowledge them like a human "
             "interviewer would, help if you can, then steer back to the question.\n"
+            "Your reply is the ONLY thing the candidate hears — the question is not read out "
+            "again separately. So when they did not hear you, want it repeated, or need it "
+            "explained, your reply MUST end by actually asking the question again in full. "
+            "\"Sure, let me repeat that\" on its own leaves them with nothing, and they will "
+            "ask a second time.\n"
             "CRITICAL — you know nothing about this employer beyond the job title and required "
             "skills listed above. You do NOT know the salary, the location or whether it is "
             "remote, the team size, who they would report to, the benefits, the other stages, or "
@@ -362,7 +524,16 @@ def score_answer(question, answer, job_title, job_skills, language="English", fi
             f"For this field, a strong answer shows: {guide['probe']}.\n"
             f"{_candidate_block(candidate)}"
             f"Judge the answer against what is reasonable for their experience level, "
-            f"not against a perfect textbook answer.\n\n"
+            f"not against a perfect textbook answer.\n"
+            # Without this the model quietly marks down Roman Urdu and mixed
+            # answers as "unclear" or "poorly articulated" — penalising a
+            # candidate for the language the employer chose for them.
+            f"This interview is conducted in {_language_line(language)}. "
+            f"Score ONLY the substance of what they said. Never reward or penalise "
+            f"the language, spelling, grammar or accent — an answer in Roman Urdu, "
+            f"or one that mixes English and Roman Urdu, must score exactly the same "
+            f"as the identical answer in fluent English. Speech-to-text errors and "
+            f"informal spelling are not the candidate's mistakes.\n\n"
             f"Question: {question}\n"
             f"Answer: {answer}\n\n"
             f"Score honestly — a vague or evasive answer must score low even if it is well worded, "

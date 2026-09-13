@@ -177,6 +177,42 @@ const screenshotSchema = new Schema(
   { _id: false }
 )
 
+// One saved webcam still of the candidate during the interview.
+//
+// The face checks already ran on every frame, but only the *numbers* survived —
+// a match score with no picture behind it. An employer reading "identity match
+// 41%" had no way to see who was actually sitting there, and a candidate
+// accused of it had nothing to point at. These are the frames themselves.
+//
+// Same storage rule as screenshotSchema: the image goes to Cloudinary and only
+// the URL is kept here, or a long interview would blow the 16MB document limit.
+const faceShotSchema = new Schema(
+  {
+    url: { type: String, required: true },
+    publicId: { type: String, default: '' }, // for deletion when the record goes
+    order: { type: Number },                 // question on screen at the time
+    atSeconds: { type: Number, default: 0 },
+    // The identity verdict for this exact frame, so a flagged still can be
+    // shown next to the reason it was flagged instead of an overall average.
+    matchScore: { type: Number, min: 0, max: 100, default: null },
+    matched: { type: Boolean, default: null },
+    faceCount: { type: Number, default: 0 },
+    // Why this frame was kept. 'reference' is the first good frame — proof of
+    // who started the interview. 'violation' is the frame that triggered a
+    // strike, which is the one an employer most needs to see. 'periodic' is the
+    // ordinary timeline.
+    kind: {
+      type: String,
+      enum: ['reference', 'periodic', 'violation'],
+      default: 'periodic',
+    },
+    // Set when kind === 'violation', naming the rule this frame evidences.
+    violationType: { type: String, default: '' },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+)
+
 const interviewSchema = new Schema(
   {
     // Practice runs have no application or job behind them — they are started
@@ -242,6 +278,8 @@ const interviewSchema = new Schema(
     violations: { type: [violationSchema], default: [] },
     // Periodic captures of the shared screen (see screenshotSchema).
     screenshots: { type: [screenshotSchema], default: [] },
+    // Saved webcam stills of the candidate themselves (see faceShotSchema).
+    faceShots: { type: [faceShotSchema], default: [] },
     // Running tally of frames where the candidate was looking away. Kept as a
     // count rather than a per-frame array: at one sample every few seconds this
     // would otherwise be the largest thing in the document, and the report only

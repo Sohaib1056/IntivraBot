@@ -153,7 +153,7 @@ _VALID_OBJECTS = {"phone", "notes", "screen", "person"}
 
 def objects(frame_b64: str | bytes) -> dict:
     """Look for phones, notes, extra screens or people in a webcam frame."""
-    if not gemini.is_enabled():
+    if not gemini.vision_enabled():
         return {"ok": False, "reason": "vision_unavailable", "objects": []}
 
     b64 = frame_b64.decode() if isinstance(frame_b64, bytes) else frame_b64
@@ -207,8 +207,22 @@ _LIVENESS_PROMPT = (
 
 def liveness(frame_b64: str | bytes) -> dict:
     """Judge whether the frame shows a live person or a photo/screen/deepfake."""
-    if not gemini.is_enabled():
+    if not gemini.vision_enabled():
         return {"ok": False, "reason": "vision_unavailable"}
+
+    # "Is this face real?" is only a question when there IS a face. Asked about
+    # a frame with nobody in it, the model answers live:false with total
+    # confidence — it is not wrong, there genuinely is no live person — and that
+    # became a spoofing accusation. A candidate who stepped out of shot, or
+    # whose room went dark, was told their camera showed a deepfake.
+    #
+    # Absence is already reported as no_face by the caller, which is the honest
+    # description of it. So: no face detected, nothing to judge here.
+    img = face.decode_image(frame_b64)
+    if img is None:
+        return {"ok": False, "reason": "decode_failed"}
+    if face._detect(img).shape[0] == 0:
+        return {"ok": False, "reason": "no_face"}
 
     b64 = frame_b64.decode() if isinstance(frame_b64, bytes) else frame_b64
     data = gemini.generate_json(_LIVENESS_PROMPT, temperature=0.0, image_b64=b64)
@@ -256,7 +270,7 @@ _VALID_SCREEN = {"ai_chat", "search", "notes", "messaging", "code"}
 
 def screen_content(shot_b64: str | bytes) -> dict:
     """Look for cheating aids on a shared-screen screenshot."""
-    if not gemini.is_enabled():
+    if not gemini.vision_enabled():
         return {"ok": False, "reason": "vision_unavailable", "findings": []}
 
     b64 = shot_b64.decode() if isinstance(shot_b64, bytes) else shot_b64

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { protect, restrictTo } from '../middleware/auth.js'
 import { validate } from '../middleware/validate.js'
 import { startSchema, practiceSchema, answerSchema, askSchema, screenSchema, violationSchema, proctorSchema, screenshotSchema } from '../validators/interview.schema.js'
-import { start, startPractice, answer, ask, begin, screen, finish, frame, voice, violation, proctorFrame, screenshot, myInterviews, hrSchedule, getInterview } from '../controllers/interview.controller.js'
+import { start, startPractice, answer, ask, begin, screen, finish, frame, voice, voiceCheck, faceCheck, violation, proctorFrame, screenshot, myInterviews, hrSchedule, getInterview } from '../controllers/interview.controller.js'
 
 const router = Router()
 
@@ -10,6 +10,11 @@ router.use(protect)
 
 router.post('/start', restrictTo('candidate'), validate(startSchema), start)
 router.post('/practice', restrictTo('candidate'), validate(practiceSchema), startPractice)
+// Pre-check identity verification: both run before any interview exists, so
+// they are fixed paths rather than ones under '/:id'. Kept with the other
+// fixed paths.
+router.post('/voice-check', restrictTo('candidate'), voiceCheck)
+router.post('/face-check', restrictTo('candidate'), faceCheck)
 router.post('/:id/answer', restrictTo('candidate'), validate(answerSchema), answer)
 router.post('/:id/ask', restrictTo('candidate'), validate(askSchema), ask)
 router.post('/:id/begin', restrictTo('candidate'), begin)

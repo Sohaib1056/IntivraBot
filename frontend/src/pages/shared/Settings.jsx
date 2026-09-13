@@ -315,9 +315,14 @@ export default function Settings() {
                 value={hiring.language}
                 onChange={(e) => setHiring((s) => ({ ...s, language: e.target.value }))}
               >
+                {/* "Both" here means an English/Roman-Urdu mix during the
+                    interview — a different thing from the interface preference
+                    below, which uses the same word for which language the UI
+                    is shown in. */}
                 <option>English</option>
-                <option>Urdu</option>
+                <option>Roman Urdu</option>
                 <option>Both</option>
+                <option>Urdu</option>
               </Select>
               <Select
                 label="Questions per interview"

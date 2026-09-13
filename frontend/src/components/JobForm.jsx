@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, X, Wallet, ListChecks, Info } from 'lucide-react'
+import { Plus, X, Wallet, ListChecks, Info, AlertTriangle } from 'lucide-react'
 import { Card, CardHeader, CardBody } from './ui/Card'
 import { Input, Textarea, Select } from './ui/Input'
 import Button from './ui/Button'
@@ -535,6 +535,22 @@ export default function JobForm({
             <Button variant="secondary" onClick={addQuestion}><Plus className="h-4 w-4" /></Button>
           </div>
 
+          {/* Your own questions are asked word for word and are never shortened,
+              so the only useful thing to do is tell you while you are typing.
+              The candidate hears this once — past about 25 words they end up
+              reconstructing the question instead of answering it. */}
+          {(() => {
+            const words = questionInput.trim().split(/\s+/).filter(Boolean).length
+            if (words <= 25) return null
+            return (
+              <p className="flex items-start gap-1.5 text-xs text-amber-700">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                That is {words} words. Candidates hear this once — under 25 words is
+                easier to answer well. Yours is asked exactly as written either way.
+              </p>
+            )
+          })()}
+
           {questions.length > 0 && (
             <ol className="space-y-2">
               {questions.map((q, i) => (
@@ -608,11 +624,15 @@ export default function JobForm({
             <Select value={language} onChange={(e) => setLanguage(e.target.value)}>
               <option value="English">English</option>
               <option value="Roman Urdu">Roman Urdu (Urdu in English letters)</option>
+              <option value="Both">Both — mix of English and Roman Urdu</option>
               <option value="Urdu">اردو (Urdu script)</option>
             </Select>
             <p className="mt-1.5 text-xs text-ink-400">
-              Questions are asked and answers expected in this language. Roman Urdu
-              suits candidates who speak Urdu but read it faster in English letters.
+              Questions are asked and answers expected in this language.{' '}
+              <strong className="font-medium text-ink-500">Both</strong> lets the
+              interviewer and the candidate switch between English and Roman Urdu
+              mid-sentence — closest to how a real bilingual interview sounds, and
+              neither choice is marked down.
             </p>
           </div>
         </CardBody>

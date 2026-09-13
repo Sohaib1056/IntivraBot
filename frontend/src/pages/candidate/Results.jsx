@@ -1,11 +1,12 @@
 import { useLocation, Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, CheckCircle2, XCircle, MessageSquare, Mic, Type, FileText, ArrowLeft, ChevronRight, Clock } from 'lucide-react'
+import { TrendingUp, TrendingDown, CheckCircle2, XCircle, MessageSquare, Mic, Type, FileText, ArrowLeft, ChevronRight, Clock, AlertTriangle } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '../../components/ui/Card'
 import { Ring } from '../../components/ui/Progress'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import Progress from '../../components/ui/Progress'
 import Spinner from '../../components/ui/Spinner'
+import { cn } from '../../lib/cn'
 import EmptyState from '../../components/ui/EmptyState'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -172,6 +173,71 @@ function Report({ interview, showBack }) {
             <p className="text-lg font-semibold text-ink-900">{passThreshold}%</p>
           </div>
         </div>
+
+        {/* Why the interview ended, when it did not end normally.
+            A candidate whose interview closed itself used to see only a low
+            score with no explanation anywhere — not on this page, not in the
+            report. Being marked down without being told why is the one thing
+            an assessment must never do. */}
+        {interview.endedReason && interview.endedReason !== 'completed' && (
+          <div
+            className={cn(
+              'mt-5 rounded-lg border p-4',
+              interview.endedReason === 'violation'
+                ? 'border-red-200 bg-red-50'
+                : 'border-amber-200 bg-amber-50'
+            )}
+          >
+            <p
+              className={cn(
+                'flex items-start gap-2 text-sm font-semibold',
+                interview.endedReason === 'violation' ? 'text-red-900' : 'text-amber-900'
+              )}
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {interview.endedReason === 'violation'
+                ? 'This interview was ended early'
+                : interview.endedReason === 'timeout'
+                  ? 'This interview ran out of time'
+                  : 'This interview was closed because you left'}
+            </p>
+            <p
+              className={cn(
+                'mt-1.5 text-xs leading-relaxed',
+                interview.endedReason === 'violation' ? 'text-red-800' : 'text-amber-800'
+              )}
+            >
+              {interview.endedReason === 'violation'
+                ? interview.terminatedFor ||
+                  'A verification rule was broken during the interview.'
+                : interview.endedReason === 'timeout'
+                  ? 'The time limit was reached before the last question. Questions you did not reach counted as zero.'
+                  : 'You were away from the interview for more than five minutes, so it was submitted automatically. Questions you did not reach counted as zero.'}
+            </p>
+
+            {/* The individual strikes, so "a rule was broken" is never the whole
+                explanation the candidate gets. */}
+            {(interview.violations || []).length > 0 && (
+              <ol className="mt-3 space-y-1.5">
+                {interview.violations.map((v, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs text-red-900">
+                    <span className="mt-px shrink-0 rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-bold">
+                      {v.strike >= 2 ? 'Ended' : `Warning ${v.strike}`}
+                    </span>
+                    <span>
+                      {v.detail}
+                      {v.atSeconds != null && (
+                        <span className="text-red-700/60">
+                          {' '}({Math.floor(v.atSeconds / 60)}m {v.atSeconds % 60}s in)
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
 
         {interview.verdict && (
           <p className="mt-5 rounded-lg bg-ink-50 px-4 py-3 text-sm leading-relaxed text-ink-600">

@@ -88,7 +88,9 @@ FIELDS: dict[str, dict] = {
         "fallbacks": [
             "A user says they cannot log in this morning, and it worked yesterday. What do you check, in order?",
             "A laptop will not boot past the manufacturer logo. Walk me through your diagnosis.",
-            "Three tickets arrive at once: a director's email is down, a printer is jammed, and a new joiner needs a machine. How do you prioritise, and what do you tell each person?",
+            # Deliberately the longest question in any bank: the three competing
+            # tickets have to be named or there is no prioritisation to ask about.
+            "Three tickets land at once: a director's email is down, a printer is jammed, and a new joiner needs a machine. How do you prioritise?",
             "Tell me about an angry user you dealt with. How did you handle the conversation?",
             "When do you stop troubleshooting and escalate — and what do you hand over?",
         ],

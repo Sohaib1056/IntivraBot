@@ -4,13 +4,15 @@
   "private": true,
   "description": "IntivraBot — AI recruitment platform. Root dev orchestrator: one command runs the AI service, backend and frontend together.",
   "scripts": {
-    "dev": "concurrently -k -n ai,backend,frontend -c magenta,cyan,green \"npm:dev:ai\" \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev": "node scripts/free-ports.mjs && concurrently -k -n ai,backend,frontend -c magenta,cyan,green \"npm:dev:ai\" \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "ports:free": "node scripts/free-ports.mjs",
     "dev:ai": "cd ai-services && .venv\\Scripts\\python.exe -m uvicorn app.main:app --port 8000 --reload",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "playwright": "^1.63.0"
   }
 }

@@ -139,6 +139,7 @@ export const updateMe = asyncHandler(async (req, res) => {
     for (const key of [
       'industry', 'size', 'designation', 'departments',
       'applyThreshold', 'passThreshold', 'language', 'questionsPerInterview',
+      'minutesPerQuestion',
     ]) {
       if (hiring[key] !== undefined) user.hiring[key] = hiring[key]
     }

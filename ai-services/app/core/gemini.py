@@ -14,6 +14,11 @@ _BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # fallback timeout (30s) still lands inside the backend's 35s abort.
 _TIMEOUT = 12
 
+# Groq runs first and answers in ~1.5s here, so anything approaching this is
+# already an outage rather than a slow reply. Kept well under _TIMEOUT so a
+# stuck Groq still leaves Gemini room to answer inside the total budget.
+_GROQ_TIMEOUT = 8
+
 # Hard wall-clock cap across every attempt and every fallback model combined.
 # A slow-but-non-timeout error response (e.g. a 503 that takes 10s to arrive)
 # isn't bounded by _TIMEOUT the way a hung connection is, so retries plus a
@@ -40,6 +45,22 @@ def _quota_exhausted(body: str) -> bool:
 
 
 def is_enabled() -> bool:
+    """Whether any live model is configured.
+
+    True for Groq alone: `generate()` falls through to it, so an installation
+    with only a Groq key still gets real questions rather than the offline bank.
+    """
+    return bool(settings.gemini_api_key or settings.groq_api_key)
+
+
+def vision_enabled() -> bool:
+    """Whether image understanding is available — Gemini only.
+
+    Kept separate from is_enabled() because the proctoring checks send pictures,
+    and Groq's free text models cannot see them. Without this split a Groq-only
+    setup would ask Groq to describe an image it never received and act on
+    whatever it invented.
+    """
     return bool(settings.gemini_api_key)
 
 
@@ -75,6 +96,29 @@ def generate(
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
 
+    deadline = time.monotonic() + _TOTAL_BUDGET
+
+    # ── Groq first for text ──────────────────────────────────────────────────
+    #
+    # Measured on this installation: Groq answers in ~1.5s, while Gemini's free
+    # tier is capped at 20 requests per day per model and spends the rest of the
+    # day returning 429. Each of those 429s still costs the candidate a
+    # round-trip plus two retry sleeps (0.6s + 1.8s) before Groq is reached at
+    # all — which is most of the 7.5s gap between answering and hearing the
+    # next question.
+    #
+    # So the fast, unexhausted provider goes first and Gemini becomes the
+    # fallback. Gemini is still tried whenever Groq fails, so a Groq outage
+    # costs nothing but the old ordering.
+    #
+    # Images are the exception and always go to Gemini below: Groq's free
+    # models are text-only and would answer a question about a frame they never
+    # received — see _groq's note.
+    if image_b64 is None and settings.groq_api_key:
+        text = _groq(prompt, json_mode=json_mode, temperature=temperature, deadline=deadline)
+        if text is not None:
+            return text
+
     # Try the configured model, then the fallback — a model being unavailable is
     # not the same as the request being bad, and dropping straight to the
     # offline bank makes interviews noticeably worse.
@@ -82,7 +126,6 @@ def generate(
     if settings.gemini_fallback_model and settings.gemini_fallback_model != settings.gemini_model:
         models.append(settings.gemini_fallback_model)
 
-    deadline = time.monotonic() + _TOTAL_BUDGET
     for i, model in enumerate(models):
         if time.monotonic() >= deadline:
             print("Gemini: out of time budget, giving up before trying", model)
@@ -92,6 +135,45 @@ def generate(
             if i > 0:
                 print(f"Gemini: served by fallback model {model}")
             return text
+
+    # Both providers failed (or, for an image prompt, Gemini alone did). The
+    # caller falls back to the offline engine from here.
+    return None
+
+
+# The primary text provider (see generate). Vision never reaches here: Groq's
+# free models are text-in/text-out, so the proctoring checks stay on Gemini and
+# fall back to "unavailable" rather than to a blind guess.
+def _groq(prompt: str, *, json_mode: bool, temperature: float, deadline: float) -> str | None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 1:
+        return None
+
+    # Now that this runs first, cap it well short of the whole budget: a hung
+    # Groq request must still leave enough time for Gemini to answer, or moving
+    # Groq to the front would have turned its outage into an offline interview.
+    attempt_timeout = min(_TIMEOUT, remaining, _GROQ_TIMEOUT)
+
+    body = {
+        "model": settings.groq_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+    }
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+
+    try:
+        res = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+            json=body,
+            timeout=attempt_timeout,
+        )
+        if res.status_code == 200:
+            return res.json()["choices"][0]["message"]["content"].strip()
+        print(f"Groq {res.status_code}: {res.text[:200]}")
+    except Exception as e:
+        print(f"Groq call failed: {e}")
     return None
 
 

@@ -59,7 +59,7 @@ const jobFields = z.object({
     customQuestions: z.array(z.string().trim().min(5, 'A question needs at least 5 characters').max(300)).max(10).optional(),
     questionCount: z.number().int().min(3).max(15).optional(),
     minutesPerQuestion: z.number().int().min(1).max(15).optional(),
-    language: z.enum(['English', 'Urdu', 'Roman Urdu']).optional(),
+    language: z.enum(['English', 'Urdu', 'Roman Urdu', 'Both']).optional(),
     allowTextAnswers: z.boolean().optional(),
     requireScreenShare: z.boolean().optional(),
     field: z.string().trim().max(40).optional(),

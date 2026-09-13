@@ -14,7 +14,7 @@ def proctor_status():
     rest need Gemini Vision. The caller uses this to decide which checks to
     ask for, so it never pays for a call that cannot succeed.
     """
-    vision = gemini.is_enabled()
+    vision = gemini.vision_enabled()
     return {
         "proctorEnabled": True,
         "gazeEnabled": True,

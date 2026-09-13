@@ -34,14 +34,117 @@ const SpeechRecognition =
 // the *writing* that uses Latin letters. Recognising it as en-US turns "aap ne
 // kya kaam kiya" into nonsense, so the audio side must stay ur-PK even though
 // the text the model reads and writes is romanised.
+// 'Both' also maps to ur-PK. The recogniser has to commit to one tag, and
+// ur-PK is the safer commitment for a bilingual speaker: Pakistani Urdu speech
+// models are trained on exactly this code-switching, so they transcribe the
+// English words inside an Urdu sentence, whereas en-US hears Urdu as noise.
+// A candidate who then answers entirely in English still transcribes well;
+// the reverse does not hold.
 function speechLang(language) {
-  return language === 'Urdu' || language === 'Roman Urdu' ? 'ur-PK' : 'en-US'
+  return language === 'English' ? 'en-US' : 'ur-PK'
+}
+
+// ur-PK recognition returns Urdu SCRIPT, which is correct for an Urdu
+// interview and wrong for a Roman Urdu one: the candidate speaks Roman Urdu,
+// the recogniser writes "واٹنگ", and the scorer — told the interview is in
+// Roman Urdu — reads Arabic-script text as a non-answer and awards 0%. The
+// candidate is marked down for the recogniser's choice of alphabet.
+//
+// So for Roman Urdu and Both, the script is transliterated back to Latin
+// before anything else sees it. This is deliberately a plain character
+// mapping, not real transliteration: it only has to produce something the
+// language model reads as Roman Urdu, and it does.
+const _URDU_MAP = {
+  'ا': 'a', 'آ': 'aa', 'ب': 'b', 'پ': 'p', 'ت': 't', 'ٹ': 't', 'ث': 's',
+  'ج': 'j', 'چ': 'ch', 'ح': 'h', 'خ': 'kh', 'د': 'd', 'ڈ': 'd', 'ذ': 'z',
+  'ر': 'r', 'ڑ': 'r', 'ز': 'z', 'ژ': 'zh', 'س': 's', 'ش': 'sh', 'ص': 's',
+  'ض': 'z', 'ط': 't', 'ظ': 'z', 'ع': 'a', 'غ': 'gh', 'ف': 'f', 'ق': 'q',
+  'ک': 'k', 'گ': 'g', 'ل': 'l', 'م': 'm', 'ن': 'n', 'ں': 'n', 'و': 'o',
+  'ہ': 'h', 'ھ': 'h', 'ء': '', 'ی': 'i', 'ے': 'e', 'ئ': 'y', 'ؤ': 'o',
+  'أ': 'a', 'ۀ': 'h', 'ۂ': 'h', 'ۃ': 'h',
+  '،': ',', '۔': '.', '؟': '?', '؛': ';',
+}
+const _URDU_RE = /[؀-ۿݐ-ݿ]/
+
+function romanise(text) {
+  if (!text || !_URDU_RE.test(text)) return text
+  let out = ''
+  for (const ch of text) {
+    // Drop the diacritics (zabar, zer, pesh…) entirely — Roman Urdu does not
+    // write them, and mapping them adds vowels nobody says.
+    if (ch >= 'ً' && ch <= 'ْ') continue
+    out += Object.prototype.hasOwnProperty.call(_URDU_MAP, ch) ? _URDU_MAP[ch] : ch
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
+// Whether this interview's transcript should be forced into Latin letters.
+// Urdu interviews keep the script — that is what was asked for.
+function wantsRoman(language) {
+  return language === 'Roman Urdu' || language === 'Both'
+}
+
+// The tag for *speaking*, which is not the same as the tag for listening.
+//
+// Roman Urdu is Urdu written in Latin letters, so a ur-PK voice tries to read
+// "Aap ne kya kaam kiya" as if it were English-looking text and mangles it,
+// while an en-US voice reads it phonetically and comes out clearly intelligible
+// — which is what actually matters here. Only real Urdu script needs the Urdu
+// voice; everything else is spoken by the English one.
+function ttsLang(language) {
+  return language === 'Urdu' ? 'ur-PK' : 'en-US'
+}
+
+// Pick the best installed voice for a tag.
+//
+// The browser's default is whatever the OS lists first, which on Windows is
+// usually the oldest and most robotic voice available. Preferring the natural /
+// neural voices when they are installed costs nothing and is the single biggest
+// free improvement to how the interviewer sounds.
+const VOICE_PREFERENCE = [
+  'natural', 'neural', 'online', 'premium', 'enhanced',
+  'aria', 'jenny', 'guy', 'ryan', 'sonia', 'libby',
+]
+
+function pickVoice(tag) {
+  let voices = []
+  try { voices = window.speechSynthesis?.getVoices?.() || [] } catch { return null }
+  if (!voices.length) return null
+
+  const base = tag.split('-')[0].toLowerCase()
+  // Exact locale first (en-US), then any voice for the same language (en-GB,
+  // en-AU) — a British voice reading English is far better than the OS default
+  // reading it, and either beats no match at all.
+  const exact = voices.filter((v) => v.lang?.toLowerCase().replace('_', '-') === tag.toLowerCase())
+  const wider = exact.length
+    ? exact
+    : voices.filter((v) => v.lang?.toLowerCase().startsWith(base))
+  if (!wider.length) return null
+
+  const scored = wider.map((v) => {
+    const name = (v.name || '').toLowerCase()
+    const rank = VOICE_PREFERENCE.findIndex((k) => name.includes(k))
+    return { v, rank: rank === -1 ? VOICE_PREFERENCE.length : rank }
+  })
+  scored.sort((a, b) => a.rank - b.rank)
+  return scored[0].v
 }
 
 // How often the webcam is sampled during the interview. Fast enough that
 // nobody can swap places between reads, slow enough not to flood a small
 // server or a candidate's uplink.
 const FRAME_INTERVAL_MS = 4000
+
+// How often the room is listened to, independently of anyone answering.
+//
+// Voice checks used to run only when an answer was submitted, which meant a
+// second person could talk throughout and never be heard, and a candidate who
+// said nothing was never checked at all. This samples the microphone on its
+// own schedule, the way the camera is already sampled.
+const VOICE_SAMPLE_MS = 15000
+// Seconds of audio taken per sample. Long enough for the speaker model to
+// embed reliably, short enough not to hold the uplink.
+const VOICE_SAMPLE_SECONDS = 4
 // Recent frames kept in memory to smooth the on-screen status. A single bad
 // frame should never make the UI shout at the candidate.
 const HISTORY_LEN = 5
@@ -49,7 +152,27 @@ const HISTORY_LEN = 5
 // How long a candidate has to be silent before we take the answer as finished.
 // Long enough to think mid-sentence, short enough that the conversation keeps
 // moving — and the countdown is shown, with a way to cancel it.
-const SILENCE_MS = 2500
+// Raised from 2500. Two and a half seconds is a normal mid-sentence pause —
+// thinking of the next word, taking a breath, recalling a project name — so
+// answers were being cut off mid-thought and sent half-finished. The recogniser
+// only reports words, never the gaps between them, so this timer is the ONLY
+// thing that distinguishes "thinking" from "finished", and it was set to a
+// length that sits squarely inside normal speech.
+//
+// A candidate genuinely finished waits five seconds and moves on; a candidate
+// mid-thought is no longer cut off. The countdown is on screen throughout and
+// can be cancelled, so the extra wait is visible rather than dead air.
+const SILENCE_MS = 5000
+// A short utterance is more likely to be mid-sentence than finished, so it gets
+// longer before the mic closes — but it MUST still close.
+//
+// This was a hard minimum word count, and that stranded people: "I can't
+// understand your question" is five words, fell under the bar, and the timer
+// never armed at all — the page sat on "Listening…" indefinitely with a
+// complete sentence on screen and no way to send it. A short answer is a real
+// answer; it just deserves more thinking time, not to be ignored.
+const SILENCE_SHORT_WORDS = 6
+const SILENCE_SHORT_MS = 7000
 
 // ── Proctoring thresholds ───────────────────────────────────────────────────
 // A violation is reported only when a problem *persists*. At one frame every
@@ -71,7 +194,21 @@ const TAB_AWAY_MS = 8000
 const BARGE_IN_LEVEL = 26
 // Consecutive animation frames above that level before we believe it (~100ms).
 // One spike is a cough, a door, a keyboard; a run of them is a sentence.
-const BARGE_IN_FRAMES = 6
+//
+// Raised from 6 (~100ms) to ~600ms of continuous sound. On a laptop the
+// microphone hears the laptop's own speaker, so the interviewer's voice
+// tripped the meter and cut itself off after a few words — the candidate heard
+// "Hi there" and nothing else. Echo cancellation removes most of that but not
+// all of it at speaker volume, and what leaks through is continuous, so the
+// only reliable separator left is duration: the leak comes and goes with the
+// speech, while a person interrupting keeps talking.
+const BARGE_IN_FRAMES = 36
+// How long the interviewer is allowed to speak before barge-in arms at all.
+//
+// Nobody interrupts a question in its first second — they have not heard
+// enough to interrupt yet. This is what guarantees the opening words are
+// always delivered, whatever the microphone picks up.
+const BARGE_IN_GRACE_MS = 1500
 
 // ── Deeper proctoring cadence ───────────────────────────────────────────────
 // Vision checks cost a Gemini call each, so they run far slower than the local
@@ -112,6 +249,9 @@ export default function Interview() {
   const [geminiEnabled, setGeminiEnabled] = useState(false)
   const [faceEnabled, setFaceEnabled] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
+  // Bumped when a microphone stream is acquired late, to re-run the audio
+  // capture effect — a ref alone would not retrigger it.
+  const [voiceStreamReady, setVoiceStreamReady] = useState(0)
   const [policy, setPolicy] = useState({ allowTextAnswers: true, requireScreenShare: false })
   const [camOn, setCamOn] = useState(false)
   const [live, setLive] = useState(null)
@@ -127,6 +267,10 @@ export default function Interview() {
   // Everything said so far, in order — see Transcript.
   const [entries, setEntries] = useState([])
   const [speaking, setSpeaking] = useState(false)
+  // Readable synchronously from startRecording, which needs to know whether the
+  // interviewer was mid-sentence *at that instant* — `speaking` would be a
+  // render behind and the guard would miss exactly the case it exists for.
+  const speakingRef = useRef(false)
 
   const [mode, setMode] = useState('voice') // 'voice' | 'text'
   const [reason, setReason] = useState('')
@@ -145,6 +289,10 @@ export default function Interview() {
 
   // ── Proctoring warnings ───────────────────────────────────────────────────
   // The active warning banner (strike 1), and the terminal screen (strike 2).
+  // Counts 3 → 0 after the pre-check hands over, then null once the interview
+  // is genuinely under way. Null (not 0) is the "finished" value so the speak
+  // effect has a single unambiguous condition to wait on.
+  const [countdown, setCountdown] = useState(null)
   const [warning, setWarning] = useState(null) // { strike, detail, message }
   const [terminated, setTerminated] = useState(null) // { detail, message }
   // Consecutive bad readings per rule, so a violation is only reported once a
@@ -185,7 +333,14 @@ export default function Interview() {
   const audioStreamRef = useRef(null)
   const processorRef = useRef(null)
   const pcmChunksRef = useRef([])
+  // A second, always-on buffer feeding the continuous voice monitor. Kept
+  // separate from pcmChunksRef so sampling the room can never consume audio
+  // that belongs to the answer being recorded.
+  const monitorChunksRef = useRef([])
   const capturingRef = useRef(false)
+  // `recording` readable from the monitor's timer, which fires seconds later
+  // and would otherwise close over a stale value.
+  const recordingRef = useRef(false)
   const srcSampleRateRef = useRef(16000)
 
   // ── Start (or resume) the interview once on mount ───────────────────────────
@@ -264,6 +419,11 @@ export default function Interview() {
   useEffect(() => {
     if (phase !== 'active' || mode !== 'voice') return
     if (!lastEntry || lastEntry.side !== 'ai') return
+    // Hold the very first question until the countdown has finished. Without
+    // this the interviewer starts talking the instant the pre-check hands over,
+    // while the candidate is still settling — they miss the opening question
+    // and the interview begins with them already behind.
+    if (countdown !== null) return
     speak(lastEntry.text, () => {
       // Guard on the live phase, not the one captured when this ran: the
       // candidate may have switched to typing or left while it was speaking.
@@ -271,7 +431,22 @@ export default function Interview() {
     })
     return stopSpeaking
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries.length, phase, mode])
+  }, [entries.length, phase, mode, countdown])
+
+  // ── "Starting in 3… 2… 1…" ──────────────────────────────────────────────────
+  // A moment between granting camera access and being asked a question. It
+  // costs three seconds and it is the difference between the interview
+  // starting *at* the candidate and the candidate being ready for it.
+  useEffect(() => {
+    if (phase !== 'active' || countdown === null) return
+    if (countdown === 0) {
+      // Hand straight over to the effect above, which is watching `countdown`.
+      const t = setTimeout(() => setCountdown(null), 450)
+      return () => clearTimeout(t)
+    }
+    const t = setTimeout(() => setCountdown((n) => n - 1), 1000)
+    return () => clearTimeout(t)
+  }, [countdown, phase])
 
   // ── Barge-in: talk over the interviewer and it stops ────────────────────────
   //
@@ -291,6 +466,10 @@ export default function Interview() {
     let raf = null
     let ctx = null
     let loud = 0
+    let armed = false
+    // Don't listen for an interruption until the question has had a moment to
+    // get going — see BARGE_IN_GRACE_MS.
+    const armTimer = setTimeout(() => { armed = true }, BARGE_IN_GRACE_MS)
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext
       ctx = new Ctx()
@@ -305,7 +484,7 @@ export default function Interview() {
         for (const v of data) peak = Math.max(peak, Math.abs(v - 128))
         // Sustained speech, not a cough or a door. A few consecutive loud
         // frames (~100ms) is a person starting a sentence; one spike is noise.
-        loud = peak > BARGE_IN_LEVEL ? loud + 1 : 0
+        loud = armed && peak > BARGE_IN_LEVEL ? loud + 1 : 0
         if (loud >= BARGE_IN_FRAMES) {
           // They started talking: stop the interviewer mid-sentence and hand
           // the mic straight over, exactly as interrupting a person would.
@@ -319,6 +498,7 @@ export default function Interview() {
     } catch { /* no mic / blocked — barge-in simply won't be available */ }
 
     return () => {
+      clearTimeout(armTimer)
       cancelAnimationFrame(raf)
       try { ctx?.close() } catch { /* already closed */ }
     }
@@ -328,11 +508,25 @@ export default function Interview() {
   // Stop any recording / speech when leaving the page.
   useEffect(() => () => { stopRecording(); stopSpeaking() }, [])
 
+  // Browsers load the voice list asynchronously, and getVoices() returns an
+  // empty array until they have. Touching it early primes that load, so by the
+  // time the first question is spoken pickVoice() has a real list to choose
+  // from instead of silently falling back to the default robotic voice.
+  useEffect(() => {
+    try {
+      window.speechSynthesis?.getVoices?.()
+      // Fires once the list is ready; the handler can stay empty because
+      // pickVoice() reads the list fresh on every utterance.
+      if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => {}
+    } catch { /* no speech synthesis here — speak() already handles that */ }
+  }, [])
+
   // Mirror the transcript into a ref: the recognition callbacks are created
   // once per recording and would otherwise read a stale `answer`.
   useEffect(() => { answerRef.current = answer }, [answer])
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { modeRef.current = mode }, [mode])
+  useEffect(() => { recordingRef.current = recording }, [recording])
 
   // ── Interview clock ─────────────────────────────────────────────────────────
   // Counted down locally for display only. The server owns the real deadline,
@@ -359,6 +553,8 @@ export default function Interview() {
   // streams avoids a second permission prompt and, for the screen share, a
   // second "pick your monitor" dialog the browser may refuse to show.
   const beginInterview = useCallback(({ cameraStream, micStream, screenStream }) => {
+    // Three seconds before the first question — see the countdown effect.
+    setCountdown(3)
     if (cameraStream) {
       streamRef.current = cameraStream
       setCamOn(true)
@@ -424,7 +620,19 @@ export default function Interview() {
     if (!interviewIdRef.current || violationInFlightRef.current) return
     violationInFlightRef.current = true
     try {
-      const res = await api.post(`/interviews/${interviewIdRef.current}/violation`, { type })
+      // Send the frame behind a *visual* rule as evidence for the report. Only
+      // these four are things a camera can show: a stopped screen share or a
+      // switched tab has no picture worth taking, and `no_face` by definition
+      // has nothing in it. grabFrame is a hoisted function declaration, so
+      // calling it from up here is safe.
+      const visual = type === 'multiple_faces' || type === 'face_mismatch' ||
+        type === 'phone_detected' || type === 'notes_detected'
+      const evidence = visual ? grabFrame() : null
+
+      const res = await api.post(`/interviews/${interviewIdRef.current}/violation`, {
+        type,
+        ...(evidence ? { frame: evidence } : {}),
+      })
       if (res.duplicate || res.ignored) return
 
       if (res.terminated) {
@@ -645,9 +853,19 @@ export default function Interview() {
         // dark or blurred frame says something about the webcam, not about the
         // candidate, and must never cost them a strike — so it neither counts
         // against them nor resets a genuine streak.
+        // "Is anybody there?" does NOT depend on frame quality, and gating it
+        // on quality was a hole big enough to walk through: leaving the camera
+        // makes the frame unreadable, which set usable:false, which skipped the
+        // check entirely — so stepping away was never reported at all. A frame
+        // the detector could decode well enough to count zero faces is evidence
+        // of absence, whatever the lighting.
+        trackViolation('no_face', res.faceCount === 0)
+        trackViolation('multiple_faces', res.faceCount > 1)
+
+        // Identity, by contrast, genuinely does need a readable frame: a dark
+        // or blurred face scores badly against the baseline for reasons that
+        // say nothing about who it is.
         if (res.quality?.usable !== false) {
-          trackViolation('multiple_faces', res.faceCount > 1)
-          trackViolation('no_face', res.faceCount === 0)
           // Only when there is a baseline to compare against — no profile photo
           // means "unknown", not "impostor".
           trackViolation('face_mismatch', res.baselineAvailable && res.match?.matched === false)
@@ -656,6 +874,46 @@ export default function Interview() {
     } catch { /* face monitoring is best-effort — never block the interview */ }
     finally { frameInFlightRef.current = false }
   }
+
+  // ── The camera itself going away ────────────────────────────────────────────
+  //
+  // Every face check above runs on a captured frame, so all of them are silent
+  // when there is no frame to capture — switching the webcam off, covering it,
+  // or revoking permission mid-interview produced no warning at all, which made
+  // it the easiest way to escape monitoring entirely.
+  //
+  // Watched here instead: the track ending, being muted by the OS, or the video
+  // element going blank are all reported as no_face, which is exactly what they
+  // mean — nobody is visible.
+  useEffect(() => {
+    if (phase !== 'active' || !camOn || isPractice) return
+    const track = streamRef.current?.getVideoTracks?.()[0]
+    if (!track) return
+
+    const gone = () => {
+      setCamOn(false)
+      reportViolation('no_face')
+    }
+    // 'ended' fires when the device is unplugged or the user stops it from the
+    // browser's own camera control; 'mute' when the OS or a privacy shutter
+    // takes the feed away without ending the track.
+    track.addEventListener('ended', gone)
+    track.addEventListener('mute', gone)
+
+    // A track can also stay "live" while delivering nothing — some virtual
+    // cameras and privacy covers behave this way — so the state is polled too.
+    const poll = setInterval(() => {
+      const v = videoRef.current
+      if (track.readyState === 'ended' || !v || !v.videoWidth) gone()
+    }, 5000)
+
+    return () => {
+      clearInterval(poll)
+      track.removeEventListener('ended', gone)
+      track.removeEventListener('mute', gone)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, camOn, isPractice, reportViolation])
 
   // ── Deeper proctoring: gaze, objects in shot, liveness ──────────────────────
   //
@@ -702,6 +960,68 @@ export default function Interview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camOn, phase, interview?._id, isPractice])
 
+  // ── Continuous voice monitoring ─────────────────────────────────────────────
+  //
+  // The voice check used to run once per submitted answer and nowhere else, so
+  // a second person could coach the candidate for the whole interview and never
+  // be heard — the microphone was only ever examined during the candidate's own
+  // speech. This listens on its own schedule, like the camera does.
+  //
+  // It reuses the same ScriptProcessor by taking a copy of whatever has
+  // accumulated, rather than opening a second AudioContext on one microphone.
+  useEffect(() => {
+    if (phase !== 'active' || !voiceEnabled || !interview?._id || isPractice) return
+
+    let stopped = false
+    let timer
+
+    const tick = async () => {
+      if (stopped || terminatedRef.current) return
+      // Skip only while the candidate is genuinely part-way through an answer,
+      // which is what `answerRef` holds — NOT merely while the recogniser is
+      // open. In voice mode the microphone is open almost the whole time by
+      // design, so gating on `recording` alone meant this never sampled once:
+      // the monitor was installed and silently did nothing.
+      const midAnswer = recordingRef.current && answerRef.current.trim().length > 0
+      // Never sample while the interviewer is talking, and throw away whatever
+      // was buffered during it. The microphone picks up the laptop's speaker,
+      // so a window containing the question contains a second speaker by
+      // definition — which is exactly how an honest candidate sitting alone
+      // ended up flagged "Multiple voices".
+      if (speakingRef.current) {
+        monitorChunksRef.current = []
+        if (!stopped) timer = setTimeout(tick, VOICE_SAMPLE_MS)
+        return
+      }
+      if (!midAnswer && !submittingRef.current) {
+        const chunks = monitorChunksRef.current
+        monitorChunksRef.current = []
+        const total = chunks.reduce((n, c) => n + c.length, 0)
+        const needed = srcSampleRateRef.current * VOICE_SAMPLE_SECONDS * 0.5
+        if (total >= needed) {
+          const merged = new Float32Array(total)
+          let off = 0
+          for (const c of chunks) { merged.set(c, off); off += c.length }
+          try {
+            const pcm16 = toInt16_16k(merged, srcSampleRateRef.current)
+            const res = await api.post(`/interviews/${interview._id}/voice`, {
+              audio: int16ToBase64(pcm16), sampleRate: 16000, passive: true,
+            })
+            if (res?.ok) {
+              if (res.warning) applyServerWarning(res.warning)
+              else if (!res.isReference && res.multiVoice) reportViolation('multiple_voices')
+            }
+          } catch { /* monitoring is best-effort */ }
+        }
+      }
+      if (!stopped) timer = setTimeout(tick, VOICE_SAMPLE_MS)
+    }
+    timer = setTimeout(tick, VOICE_SAMPLE_MS)
+
+    return () => { stopped = true; clearTimeout(timer) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, voiceEnabled, interview?._id, isPractice])
+
   // ── Screen capture for the employer's timeline ──────────────────────────────
   //
   // Every capture is stored so HR can scrub through what was on screen; only
@@ -739,7 +1059,29 @@ export default function Interview() {
 
   // ── Audio capture for voice biometrics ──────────────────────────────────────
   useEffect(() => {
-    if (phase !== 'active' || !voiceEnabled || !audioStreamRef.current) return
+    if (phase !== 'active' || !voiceEnabled) return
+    // The pre-check normally hands its microphone stream over, but if that did
+    // not happen the voice checks would silently never run — the candidate
+    // would appear fully monitored while nothing was listening at all. Open our
+    // own stream rather than failing quietly.
+    if (!audioStreamRef.current) {
+      // echoCancellation is what stops the microphone hearing the laptop's own
+      // speaker. Without it the interviewer's voice comes back in through the
+      // mic, trips barge-in, and cuts the question off after a few words — the
+      // candidate heard "Hi there" and then silence. It also keeps the
+      // interviewer's voice out of the answer transcript and out of the voice
+      // biometrics, both of which were being polluted by it.
+      navigator.mediaDevices?.getUserMedia?.({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+        .then((s) => {
+          audioStreamRef.current = s
+          // Re-run this effect now that there is something to attach to.
+          setVoiceStreamReady((n) => n + 1)
+        })
+        .catch(() => { /* mic denied — voice checks genuinely cannot run */ })
+      return
+    }
     let cancelled = false
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext
@@ -750,8 +1092,18 @@ export default function Interview() {
       const source = ctx.createMediaStreamSource(audioStreamRef.current)
       const processor = ctx.createScriptProcessor(4096, 1, 1)
       processor.onaudioprocess = (e) => {
-        if (!capturingRef.current) return
-        pcmChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+        const frame = e.inputBuffer.getChannelData(0)
+        // The answer buffer only fills while they are actually answering.
+        if (capturingRef.current) pcmChunksRef.current.push(new Float32Array(frame))
+        // The monitor buffer always fills, because the point is to hear what
+        // happens when the candidate is NOT the one talking. Bounded so a long
+        // silence between samples cannot grow it without limit.
+        const monitor = monitorChunksRef.current
+        monitor.push(new Float32Array(frame))
+        const cap = Math.ceil(
+          (srcSampleRateRef.current * VOICE_SAMPLE_SECONDS) / frame.length
+        )
+        if (monitor.length > cap) monitor.splice(0, monitor.length - cap)
       }
       source.connect(processor)
       processor.connect(ctx.destination)
@@ -759,7 +1111,7 @@ export default function Interview() {
     } catch { /* no mic / denied — voice check simply won't run */ }
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, voiceEnabled])
+  }, [phase, voiceEnabled, voiceStreamReady])
 
   // Release audio resources on unmount.
   useEffect(() => () => {
@@ -905,7 +1257,7 @@ export default function Interview() {
   // mic straight afterwards. It must also run when speech synthesis is missing
   // or throws, or the candidate would be left with a dead mic and no button.
   function speak(text, onDone) {
-    const done = () => { setSpeaking(false); onDone?.() }
+    const done = () => { speakingRef.current = false; setSpeaking(false); onDone?.() }
     if (typeof window === 'undefined' || !window.speechSynthesis || !text) {
       done()
       return
@@ -913,8 +1265,16 @@ export default function Interview() {
     try {
       window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(text)
-      u.lang = speechLang(language)
-      u.onstart = () => setSpeaking(true)
+      const tag = ttsLang(language)
+      u.lang = tag
+      const voice = pickVoice(tag)
+      if (voice) u.voice = voice
+      // A shade under the default. Stock TTS reads interview questions faster
+      // than a person would ask them, which is most of why it sounds like a
+      // machine reading rather than someone talking.
+      u.rate = 0.95
+      u.pitch = 1
+      u.onstart = () => { speakingRef.current = true; setSpeaking(true) }
       u.onend = done
       u.onerror = done
       window.speechSynthesis.speak(u)
@@ -924,6 +1284,7 @@ export default function Interview() {
   }
   function stopSpeaking() {
     try { window.speechSynthesis?.cancel() } catch { /* ignore */ }
+    speakingRef.current = false
     setSpeaking(false)
   }
 
@@ -935,7 +1296,38 @@ export default function Interview() {
   // decides whether it was a complete answer or needs a follow-up.
   function startRecording() {
     if (!SpeechRecognition) return
+    // Silence the interviewer BEFORE the microphone opens, and give the audio
+    // stack a moment to actually stop.
+    //
+    // speechSynthesis.cancel() is not instant — the last fraction of a second
+    // still reaches the speakers, and the recogniser (which opens its own
+    // microphone with the browser's default settings, where our echo
+    // cancellation does not apply) transcribes it as if the candidate had said
+    // it. That is why the interviewer's own words kept appearing inside the
+    // answers, and why the voice check reported "Multiple voices".
+    const wasSpeaking = speakingRef.current
     stopSpeaking()
+    if (wasSpeaking) {
+      setTimeout(() => {
+        if (phaseRef.current === 'active' && modeRef.current === 'voice') openRecogniser()
+      }, 250)
+      return
+    }
+    openRecogniser()
+  }
+
+  function openRecogniser() {
+    if (!SpeechRecognition) return
+    // Never run two recognisers at once.
+    //
+    // rec.start() throws if one is already running, and that throw used to be
+    // swallowed by the caller — so the third question would open the mic,
+    // fail, and sit there "Listening…" having never actually started. Closing
+    // any existing one first is what makes a restart reliable.
+    if (recognitionRef.current) {
+      try { recognitionRef.current.onend = null; recognitionRef.current.abort() } catch { /* already gone */ }
+      recognitionRef.current = null
+    }
     // Start the raw-audio capture for voice biometrics now, not when the
     // question first appeared — otherwise the sample includes the TTS
     // reading the question instead of just the candidate's voice.
@@ -945,15 +1337,33 @@ export default function Interview() {
     rec.lang = speechLang(language)
     rec.continuous = true
     rec.interimResults = true
-    let finalText = answer ? answer + ' ' : ''
+    const roman = wantsRoman(language)
+    // From the ref for the same reason as everywhere else here: startRecording
+    // is called straight from callbacks that have not re-rendered yet, so
+    // `answer` can be a render behind.
+    const sofar = answerRef.current || answer
+    let finalText = sofar ? sofar + ' ' : ''
     rec.onresult = (e) => {
       let interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript
+        // ur-PK hands back Urdu script even when the interview is being held
+        // in Roman Urdu. Convert here, at the single point the transcript
+        // enters the app, so the answer box, the submitted answer and the
+        // employer's transcript all agree and none of them contains an
+        // alphabet the scorer will read as gibberish.
+        const t = roman ? romanise(e.results[i][0].transcript) : e.results[i][0].transcript
         if (e.results[i].isFinal) finalText += t + ' '
         else interim += t
       }
       const text = (finalText + interim).trimStart()
+      // Write the ref here, synchronously, as well as setting state.
+      //
+      // answerRef is otherwise synced by an effect, which runs after render —
+      // but rec.onend fires in the SAME tick as this final result, so at that
+      // point both `answer` and `answerRef` still hold the previous value.
+      // submit() then saw an empty transcript and refused an answer the
+      // candidate could see on screen. Writing it here closes that window.
+      answerRef.current = text
       setAnswer(text)
       // Every word heard resets the clock — the pause only counts once they
       // have actually stopped, not while they are thinking mid-sentence.
@@ -963,16 +1373,49 @@ export default function Interview() {
     rec.onend = () => {
       capturingRef.current = false
       setRecording(false)
+      // Chrome ends recognition on its own — after a stretch of quiet, and
+      // periodically regardless. That is the browser's timeout, NOT the
+      // candidate saying they are done.
+      //
+      // This used to submit whenever it fired, so an answer went off mid-
+      // thought simply because the recogniser had been running a while: the
+      // candidate paused to think, Chrome closed the mic, and their half
+      // sentence was sent and scored. Restarting instead keeps the mic open
+      // and leaves the decision to the silence timer, which is the only thing
+      // here actually measuring how long they have been quiet.
+      if (
+        phaseRef.current === 'active' &&
+        modeRef.current === 'voice' &&
+        autoSendRef.current &&
+        !submittingRef.current
+      ) {
+        try { rec.start(); setRecording(true); capturingRef.current = true; return } catch { /* fall through */ }
+      }
       clearSilenceTimer()
-      // Chrome ends recognition on its own after a long pause. If they said
-      // something, that is them finished — send it rather than stranding the
-      // answer in the box with no way to submit it.
+      // A deliberate stop, or the restart failed: send what they said rather
+      // than stranding it in the box with no way to submit.
       const text = answerRef.current.trim()
       if (text && !submittingRef.current && autoSendRef.current) submit()
     }
     recognitionRef.current = rec
-    rec.start()
-    setRecording(true)
+    try {
+      rec.start()
+      setRecording(true)
+    } catch {
+      // start() throws if the engine has not finished releasing the microphone
+      // from the previous question. Unguarded, this left the page showing
+      // "Listening…" with nothing actually listening — the candidate spoke a
+      // whole answer into a closed mic and the interview appeared to freeze.
+      // One retry a beat later is enough; the engine is free by then.
+      recognitionRef.current = null
+      capturingRef.current = false
+      setRecording(false)
+      setTimeout(() => {
+        if (phaseRef.current === 'active' && modeRef.current === 'voice' && !recognitionRef.current) {
+          startRecording()
+        }
+      }, 400)
+    }
   }
 
   function stopRecording() {
@@ -985,7 +1428,10 @@ export default function Interview() {
     recognitionRef.current = null
     capturingRef.current = false
     setRecording(false)
-    autoSendRef.current = true
+    // Restored on a later tick, not here: rec.onend fires asynchronously after
+    // stop(), and flipping this back immediately let onend see `true` and
+    // restart the recogniser this call had just closed.
+    setTimeout(() => { autoSendRef.current = true }, 0)
   }
 
   function clearSilenceTimer() {
@@ -999,10 +1445,14 @@ export default function Interview() {
   function armSilenceTimer(text) {
     clearTimeout(silenceRef.current)
     if (!text.trim()) return
-    setSilenceLeft(SILENCE_MS)
+    // A short utterance waits longer, but it always waits a finite time — see
+    // SILENCE_SHORT_WORDS.
+    const words = text.trim().split(/\s+/).length
+    const wait = words < SILENCE_SHORT_WORDS ? SILENCE_SHORT_MS : SILENCE_MS
+    setSilenceLeft(wait)
     const startedAt = Date.now()
     const tick = () => {
-      const left = SILENCE_MS - (Date.now() - startedAt)
+      const left = wait - (Date.now() - startedAt)
       if (left <= 0) {
         setSilenceLeft(0)
         finishSpeaking()
@@ -1017,13 +1467,24 @@ export default function Interview() {
   // They stopped talking — close the mic and send what they said.
   function finishSpeaking() {
     clearSilenceTimer()
+    // Held false across the stop() so rec.onend treats this as a deliberate
+    // close and does not restart the recogniser underneath us. Restored after
+    // the beat below, once onend has certainly run.
     autoSendRef.current = false
     try { recognitionRef.current?.stop() } catch { /* ignore */ }
     recognitionRef.current = null
     capturingRef.current = false
     setRecording(false)
-    autoSendRef.current = true
-    if (answerRef.current.trim() && !submittingRef.current) submit()
+    // stop() is not instant: Chrome promotes the trailing interim result to a
+    // final one and fires onresult once more AFTER this returns. Submitting
+    // immediately sent the transcript minus its last few words — the box on
+    // screen kept filling in after the answer had already gone, which is
+    // exactly the mismatch the candidate saw (11 words sent, 23 on screen).
+    // A short beat lets that last result land first.
+    setTimeout(() => {
+      autoSendRef.current = true
+      if (answerRef.current.trim() && !submittingRef.current) submit()
+    }, 350)
   }
 
   // The old "Ask a question" box is gone: you interrupt an interviewer by
@@ -1037,7 +1498,15 @@ export default function Interview() {
   const submit = async () => {
     stopRecording()
     stopSpeaking()
-    const text = answer.trim()
+    // Read the transcript from the ref, not from `answer`.
+    //
+    // rec.onend fires in the same tick as the final onresult, so the state
+    // update from that result has not been applied yet and `answer` is still
+    // whatever it was a moment earlier — usually empty. The candidate spoke a
+    // full sentence, saw it in the box (which renders from the same update),
+    // and got "Please answer before continuing" with their answer on screen in
+    // front of them. The ref is written synchronously and is always current.
+    const text = (answerRef.current || answer).trim()
     if (!text) { setError('Please answer before continuing.'); return }
     if (mode === 'text' && !reason) { setError('Select a reason to use text mode.'); return }
     if (policy.requireScreenShare && !sharing) {
@@ -1071,21 +1540,29 @@ export default function Interview() {
           // one, it just wasn't done. Only a genuine aside gets relabelled.
           if (mine?.side === 'candidate' && !res.followUp) mine.kind = 'aside'
           next.push({ side: 'ai', kind: 'reply', text: res.reply, meta: { intent: res.intent } })
-          // A follow-up presses on what they left out, so re-reading the
-          // original question would undo the point of asking it.
-          if (!res.followUp) {
-            next.push({
-              side: 'ai',
-              kind: 'question',
-              text: current.text,
-              meta: { source: current.source },
-            })
-          }
+          // The question is NOT re-pushed here.
+          //
+          // It used to be, and it produced exactly the transcript the candidate
+          // saw: the clarification ("let me clarify — I'm asking you to walk me
+          // through one React project…") followed by the original question
+          // underneath it, so the interview appeared to ask two different
+          // things at once and the newest line on screen was the older
+          // question. Read aloud it was worse still — the clarification was
+          // spoken and then immediately contradicted by the question it had
+          // just reworded.
+          //
+          // The reply already contains the question (the server prompt
+          // requires it), so there is nothing to restate. The question also
+          // stays visible further up the transcript where it was first asked.
           return next
         })
         if (res.intent === 'issue' && !policy.allowTextAnswers) setHardship(true)
         // Clear the box either way: what they already said is recorded on the
         // server as a turn, and the follow-up asks for the missing part only.
+        // The ref is cleared alongside the state for the same reason it is
+        // written alongside it above — the mic reopens immediately here, and a
+        // stale ref would prepend the previous utterance to the next answer.
+        answerRef.current = ''
         setAnswer('')
         setPhase('active')
         return
@@ -1120,6 +1597,8 @@ export default function Interview() {
         return
       }
       setCurrent(res.nextQuestion)
+      // Ref and state cleared together — see the onresult handler.
+      answerRef.current = ''
       setAnswer('')
       setReason('')
       setPhase('active')
@@ -1407,6 +1886,28 @@ export default function Interview() {
             <Button size="sm" onClick={resumeShare} className="shrink-0">
               Share my screen again
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Three seconds before the first question. Covers the page rather than
+          sitting in a corner: the point is that the candidate looks up and is
+          ready, which a small badge somewhere would not achieve. */}
+      {countdown !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/90 backdrop-blur-sm">
+          <div className="text-center">
+            <p className="text-sm font-medium uppercase tracking-widest text-ink-300">
+              Your interview begins in
+            </p>
+            <p
+              key={countdown}
+              className="mt-3 animate-[ping_0.6s_ease-out_1] text-8xl font-bold tabular-nums text-white"
+            >
+              {countdown === 0 ? 'Go' : countdown}
+            </p>
+            <p className="mt-4 text-sm text-ink-400">
+              Sit comfortably and look at the camera. The interviewer speaks first.
+            </p>
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Camera, Mic, MonitorUp, ShieldCheck, CheckCircle2, XCircle, Loader2,
   AlertTriangle, Clock, MessageSquare, Eye, ChevronRight, Volume2, DoorOpen,
@@ -6,6 +7,7 @@ import {
 } from 'lucide-react'
 import Button from '../ui/Button'
 import { cn } from '../../lib/cn'
+import { api } from '../../lib/api'
 
 /**
  * What the candidate sees before the interview starts.
@@ -31,6 +33,56 @@ const MIC_SPEECH_LEVEL = 28
 // Frames at speech level before it counts. A bang or a cough is a single
 // spike; a spoken phrase holds level across many frames (~250ms at 60fps).
 const MIC_SPEECH_FRAMES = 15
+// Seconds of speech captured for the speaker check. The embedding model needs a
+// few seconds to be reliable; much less and an honest candidate fails.
+const VOICE_VERIFY_MS = 3500
+
+// ── Camera check ────────────────────────────────────────────────────────────
+// The webcam needs a moment after the stream opens before it is exposed
+// correctly — a frame grabbed immediately is usually dark, which reads as an
+// unusable frame and fails an honest candidate.
+const FACE_SETTLE_MS = 1200
+// A single frame can catch a blink, a turn or a badly lit moment. Several are
+// tried and the best result wins, so one bad frame never fails the check.
+const FACE_ATTEMPTS = 3
+const FACE_RETRY_MS = 900
+
+// One JPEG frame from a live video element, as bare base64 (no data: prefix),
+// which is what /face-check expects. Same shape the interview page sends.
+function grabFrameB64(video) {
+  if (!video?.videoWidth) return null
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.8).split(',')[1] || null
+}
+
+// Float32 at the device rate -> Int16 at 16 kHz, which is what the speaker
+// model expects. Same conversion the interview page uses for answer clips.
+function downsampleTo16k(input, srcRate) {
+  const ratio = srcRate / 16000
+  const outLen = Math.max(0, Math.floor(input.length / ratio))
+  const out = new Int16Array(outLen)
+  for (let i = 0; i < outLen; i++) {
+    const idx = i * ratio
+    const i0 = Math.floor(idx)
+    const frac = idx - i0
+    const s = input[i0] * (1 - frac) + (input[i0 + 1] || 0) * frac
+    out[i] = Math.max(-1, Math.min(1, s)) * 32767
+  }
+  return out
+}
+
+function pcmToBase64(int16) {
+  const bytes = new Uint8Array(int16.buffer)
+  let bin = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(bin)
+}
 
 const CHECK_IDLE = 'idle'
 const CHECK_BUSY = 'busy'
@@ -55,6 +107,24 @@ export default function PreCheck({
   const [mic, setMic] = useState(CHECK_IDLE)
   const [screen, setScreen] = useState(CHECK_IDLE)
   const [micLevel, setMicLevel] = useState(0)
+  // What the mic card says beneath its title. Speaker verification replaces the
+  // generic "we can hear you" with a real result, so the text is state now.
+  const [micNote, setMicNote] = useState('')
+  // Same idea for the camera: the result of matching the live frame against the
+  // photo on the candidate's profile, so the card says whether it is really
+  // them rather than only that a camera exists.
+  const [cameraNote, setCameraNote] = useState('')
+  // Whether the candidate has a profile photo / voiceprint to be checked
+  // against at all. Null until the matching check has run and told us.
+  //
+  // Without these an unenrolled candidate sailed through both checks — there
+  // was nothing to compare them to, so nothing could fail — and the employer
+  // received an interview with no identity evidence behind it whatsoever.
+  const [faceEnrolled, setFaceEnrolled] = useState(null)
+  const [voiceEnrolled, setVoiceEnrolled] = useState(null)
+  // Guards against the level meter firing verification on every frame once it
+  // crosses the speech threshold.
+  const verifyStartedRef = useRef(false)
   const [screenError, setScreenError] = useState('')
   const [consent, setConsent] = useState(false)
 
@@ -86,6 +156,14 @@ export default function PreCheck({
 
   async function testCamera() {
     setCamera(CHECK_BUSY)
+    setCameraNote('')
+    // "Try again" after a failed match: the camera is already open and working,
+    // so re-verify the stream we hold. Calling getUserMedia a second time would
+    // leave the first stream running with nothing stopping it.
+    if (camStreamRef.current?.getVideoTracks()[0]?.readyState === 'live') {
+      await verifyFace()
+      return
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
@@ -96,16 +174,141 @@ export default function PreCheck({
         videoRef.current.srcObject = stream
         await videoRef.current.play().catch(() => {})
       }
-      setCamera(CHECK_OK)
+      // The camera opening is only half the check. Who is in front of it is the
+      // other half, and it is the half that matters — without it a photo held
+      // to the lens, or somebody else entirely, passed.
+      await verifyFace()
     } catch {
       setCamera(CHECK_FAIL)
+      setCameraNote("We couldn't access your camera. Allow it in your browser and try again.")
     }
+  }
+
+  // Match the live frame against the photo on the candidate's profile.
+  //
+  // Deliberately no percentage in any of the messages below. A live webcam
+  // frame never scores near 100 against a posed profile photo — different
+  // light, angle and day — so a genuine candidate sees something like 68%,
+  // reads it as "barely passed", and starts an interview rattled. The pass
+  // mark is far lower than that number looks, and a real impostor lands
+  // nowhere near it. The score still goes to the employer's report, where it
+  // has context; here it only causes doubt where there is none.
+  async function verifyFace() {
+    setCamera(CHECK_BUSY)
+    setCameraNote('Checking it is you…')
+    await new Promise((r) => setTimeout(r, FACE_SETTLE_MS))
+
+    let last = null
+    for (let attempt = 0; attempt < FACE_ATTEMPTS; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, FACE_RETRY_MS))
+      const frame = grabFrameB64(videoRef.current)
+      if (!frame) continue
+      try {
+        const res = await api.post('/interviews/face-check', { frame })
+        last = res
+        // A clear match, or a verdict there is no point retrying, ends it here.
+        // Anything else is worth another frame: a blink or a turn is not proof.
+        if (res.matched === true || res.enrolled === false || !res.ok) break
+        if (res.faceCount > 1) break
+      } catch {
+        last = null
+      }
+    }
+
+    if (!last) {
+      // Every attempt failed to reach the server or produce a frame. Passes
+      // rather than locking a candidate out over our own failure, but it says
+      // so instead of showing a bare tick that reads as verified.
+      setCamera(CHECK_OK)
+      setCameraNote(
+        'Camera is working. We could not verify your identity just now — ' +
+        'it will be checked during the interview instead.'
+      )
+      return
+    }
+
+    // Order matters: the service reports singlePerson:false for an empty frame
+    // too, so "nobody" must be ruled out before "more than one".
+    if (last.ok && last.faceCount === 0) {
+      setCamera(CHECK_FAIL)
+      setCameraNote('We cannot see your face. Sit in front of the camera in good light and try again.')
+      return
+    }
+    if (last.faceCount > 1) {
+      setCamera(CHECK_FAIL)
+      setCameraNote('More than one person is in frame. You must be alone for the interview.')
+      return
+    }
+    // Same three-way split as the microphone below, and for the same reason:
+    // these used to share one branch that passed, so "we could not judge this
+    // frame" was indistinguishable from "this is the right person".
+
+    // 1. No profile photo. Nothing to compare against, not their fault — the
+    //    camera passes, but nobody is claimed to have been verified.
+    if (last.enrolled === false) {
+      setFaceEnrolled(false)
+      setCamera(CHECK_OK)
+      setCameraNote(
+        'Camera is working, but there is no photo on your profile to check you against. ' +
+        'Add one before starting this interview.'
+      )
+      return
+    }
+    setFaceEnrolled(true)
+
+    // 2. The frame could not be judged. Retryable, and must not pass.
+    if (last.usable === false) {
+      setCamera(CHECK_FAIL)
+      setCameraNote(
+        'The camera image is too dark or blurred to confirm it is you. ' +
+        'Turn on a light, face the camera and try again.'
+      )
+      return
+    }
+
+    // 3. Our own service is down — pass rather than lock everyone out, and say so.
+    if (!last.ok) {
+      setCamera(CHECK_OK)
+      setCameraNote(
+        'Camera is working. Identity verification is temporarily unavailable, ' +
+        'so it will be checked during the interview instead.'
+      )
+      return
+    }
+
+    if (last.matched === false) {
+      setCamera(CHECK_FAIL)
+      setCameraNote(
+        'This does not match the photo on your profile. ' +
+        'Sit in front of the camera yourself and try again — the interview is verified throughout.'
+      )
+      return
+    }
+    // Enrolled, service up, frame usable, and still no verdict — nothing was
+    // confirmed, so this must not claim it was.
+    if (last.matched !== true) {
+      setCamera(CHECK_FAIL)
+      setCameraNote(
+        'We could not confirm it is you from that image. ' +
+        'Face the camera in good light and try again.'
+      )
+      return
+    }
+    setCamera(CHECK_OK)
+    setCameraNote('Verified as you.')
   }
 
   async function testMic() {
     setMic(CHECK_BUSY)
+    setMicNote('')
+    verifyStartedRef.current = false
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Must match the constraints the interview itself uses: this is the
+      // stream handed straight over to it, so asking for a raw one here would
+      // give the interview a microphone that hears its own speaker.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
       micStreamRef.current = stream
       const Ctx = window.AudioContext || window.webkitAudioContext
       const ctx = new Ctx()
@@ -145,12 +348,134 @@ export default function PreCheck({
         // Needs a quiet moment *and* a loud one: that difference is what tells
         // a voice apart from a microphone sitting next to a noisy fan.
         const heard = quietSeen && loudFrames >= MIC_SPEECH_FRAMES && peakSeen >= MIC_SPEECH_LEVEL
-        setMic(heard ? CHECK_OK : CHECK_BUSY)
+        if (heard && !verifyStartedRef.current) {
+          // Hearing speech is only half the check. Who is speaking is the other
+          // half, and it is the half that matters — without it anyone could
+          // hold a phone to the microphone and pass.
+          verifyStartedRef.current = true
+          verifySpeaker(stream)
+          return // stop the meter; verifySpeaker drives the state from here
+        }
+        setMic(heard ? CHECK_BUSY : CHECK_BUSY)
         rafRef.current = requestAnimationFrame(loop)
       }
       loop()
     } catch {
       setMic(CHECK_FAIL)
+    }
+  }
+
+  // Record a few seconds and compare the speaker against the voiceprint the
+  // candidate enrolled on their profile.
+  async function verifySpeaker(stream) {
+    setMic(CHECK_BUSY)
+    setMicNote('Checking it is you…')
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      const ctx = new Ctx()
+      const source = ctx.createMediaStreamSource(stream)
+      const processor = ctx.createScriptProcessor(4096, 1, 1)
+      const chunks = []
+      processor.onaudioprocess = (e) => {
+        chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+      }
+      source.connect(processor)
+      processor.connect(ctx.destination)
+
+      await new Promise((r) => setTimeout(r, VOICE_VERIFY_MS))
+      try { processor.disconnect(); source.disconnect() } catch { /* already gone */ }
+
+      const srcRate = ctx.sampleRate
+      try { await ctx.close() } catch { /* already closed */ }
+
+      const total = chunks.reduce((n, c) => n + c.length, 0)
+      const merged = new Float32Array(total)
+      let off = 0
+      for (const c of chunks) { merged.set(c, off); off += c.length }
+
+      const res = await api.post('/interviews/voice-check', {
+        audio: pcmToBase64(downsampleTo16k(merged, srcRate)),
+        sampleRate: 16000,
+      })
+
+      if (res.multiVoice) {
+        setMic(CHECK_FAIL)
+        setMicNote('More than one voice was heard. You must be alone for the interview.')
+        return
+      }
+      // These three used to share one branch that passed the check, which is
+      // how an unverified person got through: a clip the service could not
+      // judge ("too_short", unusable) was treated exactly like a confirmed
+      // match. "We could not check" is not "we checked and it was you", and
+      // only one of the three is genuinely the candidate's own situation.
+
+      // 1. Never enrolled. Nothing to compare against and not their fault, so
+      //    the microphone still passes — but say plainly that nobody was
+      //    verified, rather than implying they were.
+      if (res.enrolled === false) {
+        setVoiceEnrolled(false)
+        setMic(CHECK_OK)
+        setMicNote(
+          'We can hear you clearly, but there is no voiceprint on your profile to check you against. ' +
+          'Record one before starting this interview.'
+        )
+        return
+      }
+      setVoiceEnrolled(true)
+
+      // 2. The clip could not be judged — too short, too quiet, clipped. This
+      //    is retryable and must NOT pass: passing here is what let somebody
+      //    else verify on a candidate's behalf.
+      if (res.usable === false || res.reason === 'too_short') {
+        setMic(CHECK_FAIL)
+        setMicNote(
+          'We could not hear you well enough to confirm it is you. ' +
+          'Speak a full sentence out loud, close to the microphone, and try again.'
+        )
+        return
+      }
+
+      // 3. The service itself is down. Blocking every candidate out of their
+      //    interview over our own outage would be worse than the risk, so this
+      //    still passes — but it is stated, and the interview goes on checking
+      //    every answer anyway.
+      if (!res.ok) {
+        setMic(CHECK_OK)
+        setMicNote(
+          'We can hear you clearly. Voice verification is temporarily unavailable, ' +
+          'so it will be checked during the interview instead.'
+        )
+        return
+      }
+      if (res.matched === false) {
+        setMic(CHECK_FAIL)
+        setMicNote(
+          'This does not match the voice on your profile. ' +
+          'Speak yourself and try again — the interview is verified throughout.'
+        )
+        return
+      }
+      // Enrolled, service up, clip usable — and still no verdict. Nothing was
+      // actually confirmed, so this cannot claim it was. Retryable rather than
+      // a pass, for the same reason as case 2 above.
+      if (res.matched !== true) {
+        setMic(CHECK_FAIL)
+        setMicNote(
+          'We could not confirm it is you from that clip. ' +
+          'Speak a full sentence out loud and try again.'
+        )
+        return
+      }
+      setMic(CHECK_OK)
+      setMicNote('Verified as you.')
+    } catch {
+      // Our own failure — network, audio graph, anything. Passes rather than
+      // locking a candidate out, but never claims they were verified.
+      setMic(CHECK_OK)
+      setMicNote(
+        'We can hear you clearly. We could not verify your voice just now — ' +
+        'it will be checked during the interview instead.'
+      )
     }
   }
 
@@ -195,7 +520,15 @@ export default function PreCheck({
   }
 
   const screenReady = !requireScreenShare || screen === CHECK_OK
-  const canStart = camera === CHECK_OK && mic === CHECK_OK && screenReady && consent
+  // Enrolment is now required, not merely encouraged. A candidate with no
+  // photo and no voiceprint cannot be checked against anything, so every
+  // identity check silently passed and the employer got an interview with no
+  // evidence of who sat it — which is worse than no check at all, because the
+  // report looks clean. Blocked here rather than mid-interview, where there is
+  // nothing they can do about it.
+  const enrolmentMissing = faceEnrolled === false || voiceEnrolled === false
+  const canStart =
+    camera === CHECK_OK && mic === CHECK_OK && screenReady && consent && !enrolmentMissing
 
   const start = () => {
     // Hand the live streams to the interview rather than stopping and
@@ -254,11 +587,17 @@ export default function PreCheck({
             icon={Camera}
             title="Camera"
             state={camera}
-            okText="Camera is working"
-            failText="We couldn't access your camera. Allow it in your browser and try again."
-            idleText="We watch that one person — you — is present throughout."
+            // cameraNote carries the face-verification result once it is known,
+            // so the card says whether it was actually them rather than only
+            // that a camera exists.
+            okText={cameraNote || 'Camera is working'}
+            failText={
+              cameraNote ||
+              "We couldn't access your camera. Allow it in your browser and try again."
+            }
+            idleText="We check that it is you, and that you are alone, throughout."
             onTest={testCamera}
-            testLabel="Turn on camera"
+            testLabel={camera === CHECK_FAIL ? 'Try again' : 'Turn on camera'}
           >
             <div className="relative mt-3 aspect-video overflow-hidden rounded-lg bg-ink-900">
               <video
@@ -279,12 +618,18 @@ export default function PreCheck({
             icon={Mic}
             title="Microphone"
             state={mic}
-            okText="We can hear you clearly"
-            failText="We couldn't access your microphone. Allow it in your browser and try again."
-            idleText="You'll answer out loud, so we need to be sure we can hear you."
-            busyText="Say something — “hello, testing one two three”."
+            // micNote carries the speaker-verification result once it is known,
+            // so the card says whether it was actually them rather than only
+            // that a microphone exists.
+            okText={micNote || 'We can hear you clearly'}
+            failText={
+              micNote ||
+              "We couldn't access your microphone. Allow it in your browser and try again."
+            }
+            idleText="You'll answer out loud, so we need to be sure it's really you speaking."
+            busyText={micNote || 'Say something — “hello, testing one two three”.'}
             onTest={testMic}
-            testLabel="Test microphone"
+            testLabel={mic === CHECK_FAIL ? 'Try again' : 'Test microphone'}
           >
             {(mic === CHECK_BUSY || mic === CHECK_OK) && (
               <div className="mt-3">
@@ -377,13 +722,43 @@ export default function PreCheck({
             </span>
           </label>
 
-          {!canStart && (
-            <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {!consent && camera === CHECK_OK && mic === CHECK_OK && screenReady
-                ? 'Tick the box above to begin.'
-                : 'Complete every check above before starting.'}
-            </p>
+          {/* Missing enrolment is called out separately from the ordinary
+              "finish the checks" nudge: it cannot be fixed on this screen, so
+              telling someone to complete the checks would send them round in a
+              circle. It names what is missing and links straight to where it
+              is fixed. */}
+          {enrolmentMissing ? (
+            <div className="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+              <p className="flex items-start gap-2 font-semibold">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                Set up identity verification before this interview
+              </p>
+              <p className="mt-1.5">
+                This interview is verified against your profile, and your{' '}
+                {faceEnrolled === false && voiceEnrolled === false
+                  ? 'profile photo and voiceprint are'
+                  : faceEnrolled === false
+                    ? 'profile photo is'
+                    : 'voiceprint is'}{' '}
+                missing. Without {faceEnrolled === false && voiceEnrolled === false ? 'them' : 'it'} the
+                employer has no way to confirm the interview was taken by you.
+              </p>
+              <Link
+                to="/candidate/profile"
+                className="mt-2 inline-flex items-center gap-1 font-semibold text-amber-900 underline"
+              >
+                Go to my profile <ChevronRight className="h-3 w-3" />
+              </Link>
+            </div>
+          ) : (
+            !canStart && (
+              <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                {!consent && camera === CHECK_OK && mic === CHECK_OK && screenReady
+                  ? 'Tick the box above to begin.'
+                  : 'Complete every check above before starting.'}
+              </p>
+            )
           )}
 
           <div className="flex flex-col gap-2">
