@@ -12,6 +12,14 @@ import { env } from '../config/env.js'
 // that plus network/process overhead — it should never be the one to cut Gemini off.
 const TIMEOUT_MS = 35000
 
+// Proves to the AI service that a call came from this backend. That service
+// holds the Gemini/Groq keys and runs the vision and voice models behind a
+// public domain, where CORS protects nothing against a direct request — see
+// the require_service_key middleware in ai-services/app/main.py. Omitted when
+// unset so existing deployments keep working until both sides are configured.
+const serviceHeaders = () =>
+  env.aiServiceKey ? { 'X-Service-Key': env.aiServiceKey } : {}
+
 async function post(path, body) {
   if (!env.aiServiceUrl) return null
   const controller = new AbortController()
@@ -19,7 +27,7 @@ async function post(path, body) {
   try {
     const res = await fetch(`${env.aiServiceUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...serviceHeaders() },
       body: JSON.stringify(body),
       signal: controller.signal,
     })
@@ -39,7 +47,7 @@ async function post(path, body) {
 async function get(path) {
   if (!env.aiServiceUrl) return null
   try {
-    const res = await fetch(`${env.aiServiceUrl}${path}`)
+    const res = await fetch(`${env.aiServiceUrl}${path}`, { headers: serviceHeaders() })
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -86,6 +94,8 @@ export const aiService = {
       form.append('file', new Blob([buffer]), filename || 'resume')
       const res = await fetch(`${env.aiServiceUrl}/api/extract-text`, {
         method: 'POST',
+        // No Content-Type here — fetch sets the multipart boundary itself.
+        headers: serviceHeaders(),
         body: form,
         signal: controller.signal,
       })

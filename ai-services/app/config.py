@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     # start coming from the offline bank again.
     groq_model: str = "openai/gpt-oss-120b"
 
+    # ── Service-to-service auth ─────────────────────────────────────────────
+    # Only the backend should be able to call this service. CORS does not
+    # achieve that: it is a browser rule, so anyone with curl can spend the
+    # Gemini/Groq quota, run face and voice analysis, or submit frames all day.
+    #
+    # When set, every /api route requires this value in X-Service-Key. Left
+    # empty the check is skipped, so local development and any existing
+    # deployment keep working until the key is configured on both sides.
+    service_key: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

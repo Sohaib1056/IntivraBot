@@ -42,10 +42,21 @@ export function errorHandler(err, req, res, next) {
 
   if (statusCode >= 500) console.error('🔥', err)
 
+  // A stack trace names absolute server paths, the framework and its version,
+  // and the internal call chain — a map of the system handed to whoever
+  // triggered the error. It belongs in the logs, never in a response.
+  //
+  // Gated on "not obviously a developer machine" rather than on isProd alone:
+  // NODE_ENV is one forgotten dashboard variable away from being unset, and on
+  // the deployed service it WAS unset — so every 404 was publishing the
+  // container's file layout. Defaulting to hiding means forgetting the
+  // variable costs a little debugging convenience instead of leaking.
+  const isLocal = process.env.NODE_ENV === 'development' || !process.env.RAILWAY_ENVIRONMENT
+
   res.status(statusCode).json({
     success: false,
     message,
     ...(details ? { details } : {}),
-    ...(env.isProd ? {} : { stack: err.stack }),
+    ...(!env.isProd && isLocal ? { stack: err.stack } : {}),
   })
 }

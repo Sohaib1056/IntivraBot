@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 from app.config import settings  # noqa: E402
 from app.core import face as face_core, voice as voice_core  # noqa: E402
@@ -62,6 +63,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def require_service_key(request, call_next):
+    """Reject /api calls that do not carry the shared service key.
+
+    This service holds the Gemini and Groq keys and runs the face, voice and
+    vision models. Deployed with a public domain and nothing but CORS in front
+    of it, anyone could call it directly with curl — CORS is enforced by
+    browsers, not by the server — and spend the quota or run the models for
+    free. /health and / stay open so Railway's health check still works.
+
+    No key configured means no check, so local development and a deployment
+    that has not set the variable yet both keep working.
+    """
+    if settings.service_key and request.url.path.startswith("/api"):
+        if request.headers.get("x-service-key") != settings.service_key:
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
+
 
 app.include_router(resume.router, prefix="/api", tags=["resume"])
 app.include_router(interview.router, prefix="/api", tags=["interview"])

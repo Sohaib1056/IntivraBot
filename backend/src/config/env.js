@@ -23,6 +23,11 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   aiServiceUrl: process.env.AI_SERVICE_URL || '',
+  // Shared secret proving a request to the AI service came from this backend.
+  // That service is publicly reachable and holds the Gemini/Groq keys, so
+  // without it anyone can spend the quota. Optional: unset means the AI
+  // service skips the check too, which keeps local dev working.
+  aiServiceKey: process.env.AI_SERVICE_KEY || '',
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   cloudinaryUrl: process.env.CLOUDINARY_URL || '',
 

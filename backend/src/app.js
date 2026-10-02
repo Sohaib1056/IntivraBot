@@ -11,6 +11,16 @@ import { notFound, errorHandler } from './middleware/error.js'
 
 const app = express()
 
+// Behind Railway's proxy, every request arrives from the proxy's own address.
+// Without this, req.ip is that single address for ALL traffic, so the rate
+// limiters below bucket every user together: one noisy client exhausts the
+// window for everybody, and a brute-force attempt is indistinguishable from
+// normal load. Trusting one hop makes req.ip the real client again.
+//
+// Exactly one hop, not `true` — trusting the whole chain would let a client
+// forge X-Forwarded-For and hand itself a fresh rate-limit bucket per request.
+app.set('trust proxy', 1)
+
 // Security & parsing
 app.use(helmet())
 app.use(express.json({ limit: '8mb' })) // room for base64 webcam frames + audio clips
