@@ -1,0 +1,203 @@
+/* ================= Landing motion graphics =================
+   Every animated part is styled in its FINAL state. Animations only run under
+   .mg-in (graphic is in view) and hidden start states only apply under
+   .mg-wait (armed, off-screen). With reduced motion the hook sets neither
+   class, so everything simply shows — nothing can get stuck invisible.
+   Keyframes are mostly from-only: they animate *into* the element's own
+   styles, so final values (widths, scores) live in the markup. */
+
+@property --mg-n {
+  syntax: '<integer>';
+  inherits: false;
+  initial-value: 0;
+}
+
+/* ---------- entrance primitives ---------- */
+.mg-wait :is(.mg-pop, .mg-rise, .mg-slide-l, .mg-slide-r, .mg-chip, .mg-type, .mg-float),
+.mg-wait:is(.mg-pop, .mg-rise, .mg-slide-l, .mg-slide-r) {
+  opacity: 0;
+}
+
+.mg-in :is(.mg-pop, .mg-rise, .mg-slide-l, .mg-slide-r, .mg-chip),
+.mg-in:is(.mg-pop, .mg-rise, .mg-slide-l, .mg-slide-r) {
+  animation-duration: 0.75s;
+  animation-fill-mode: both;
+  animation-delay: var(--d, 0ms);
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.mg-in .mg-pop, .mg-in.mg-pop {
+  animation-name: mg-pop;
+  animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mg-in .mg-rise, .mg-in.mg-rise { animation-name: mg-rise; }
+.mg-in .mg-slide-l, .mg-in.mg-slide-l { animation-name: mg-slide-l; animation-duration: 0.9s; }
+.mg-in .mg-slide-r, .mg-in.mg-slide-r { animation-name: mg-slide-r; animation-duration: 0.9s; }
+.mg-in .mg-chip { animation-name: mg-chip; }
+
+@keyframes mg-pop { from { opacity: 0; transform: scale(0.6); } }
+@keyframes mg-rise { from { opacity: 0; transform: translateY(28px); } }
+@keyframes mg-slide-l { from { opacity: 0; transform: translateX(-80px) rotate(-3deg); } }
+@keyframes mg-slide-r { from { opacity: 0; transform: translateX(80px) rotate(3deg); } }
+@keyframes mg-chip { from { opacity: 0; transform: translateX(-18px) scale(0.85); } }
+
+/* pop in, then bob forever */
+.mg-in .mg-float {
+  animation: mg-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    mg-bob 5s ease-in-out infinite;
+  animation-delay: var(--d, 0ms), calc(var(--d, 0ms) + 700ms);
+}
+@keyframes mg-bob { 50% { transform: translateY(-10px); } }
+
+/* ---------- hero: live interview window ---------- */
+.mg-in .mg-spin { animation: mg-spin 14s linear infinite; }
+.mg-in .mg-spin-slow { animation: mg-spin 40s linear infinite; }
+.mg-in .mg-spin-rev { animation: mg-spin 40s linear infinite reverse; }
+@keyframes mg-spin { to { transform: rotate(360deg); } }
+
+.mg-in .mg-rec { animation: mg-blink 1.2s ease-in-out infinite; }
+@keyframes mg-blink { 50% { opacity: 0.2; } }
+
+.mg-in .mg-bracket { animation: mg-bracket 2.2s ease-in-out infinite; }
+@keyframes mg-bracket { 50% { transform: scale(1.08); opacity: 0.65; } }
+
+.mg-in .mg-scanline { animation: mg-scan 2.6s ease-in-out infinite; }
+@keyframes mg-scan { 0%, 100% { top: 4%; } 50% { top: 92%; } }
+
+.mg-in .mg-bars > span {
+  animation: mg-bars 1s ease-in-out infinite;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes mg-bars { 0%, 100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+
+.mg-in .mg-type {
+  animation: mg-type 2.4s steps(40, end) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes mg-type { from { clip-path: inset(0 100% 0 0); } }
+
+.mg-in .mg-ping { animation: mg-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; animation-delay: var(--d, 0ms); }
+@keyframes mg-ping { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(1.9); opacity: 0; } }
+
+/* ---------- counters + rings + bars (shared) ---------- */
+.mg-count { counter-reset: mg var(--mg-n); }
+.mg-count::after { content: counter(mg) '%'; }
+.mg-in .mg-count { animation: mg-count 1.8s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes mg-count { from { --mg-n: 0; } }
+
+.mg-in .mg-ring { animation: mg-draw 1.8s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--d, 0ms); }
+.mg-in .mg-draw { animation: mg-draw 1.2s ease-out both; animation-delay: var(--d, 0ms); }
+@keyframes mg-draw { from { stroke-dashoffset: 100; } }
+
+.mg-in .mg-grow { animation: mg-grow 1.3s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes mg-grow { from { width: 0; } }
+
+/* ---------- features: orbit ---------- */
+.mg-flow { stroke-dasharray: 7 93; stroke-dashoffset: 100; opacity: 0; }
+.mg-in .mg-flow {
+  opacity: 1;
+  animation: mg-flow 2.4s linear infinite;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes mg-flow { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+
+/* ---------- roles: CV scan + rank board ---------- */
+.mg-in .mg-beam { animation: mg-beam 2.2s ease-in-out infinite; }
+@keyframes mg-beam { 0% { top: -35%; } 100% { top: 100%; } }
+
+.mg-wait .mg-stamp { opacity: 0; }
+.mg-in .mg-stamp { animation: mg-stamp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes mg-stamp { from { opacity: 0; transform: scale(2.6) rotate(-28deg); } }
+
+/* ---------- faq: chat ---------- */
+.mg-typing { opacity: 0; }
+.mg-in .mg-typing { animation: mg-typing 1.2s ease both; animation-delay: var(--d, 0ms); }
+@keyframes mg-typing { 0% { opacity: 0; } 10%, 85% { opacity: 1; } 100% { opacity: 0; } }
+
+.mg-dots > span { animation: mg-dot 1s ease-in-out infinite; }
+.mg-dots > span:nth-child(2) { animation-delay: 0.15s; }
+.mg-dots > span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes mg-dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+/* ---------- contact: map pin ---------- */
+.mg-in .mg-drop { animation: mg-drop 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes mg-drop { from { opacity: 0; transform: translateY(-90px) rotate(-6deg); } }
+
+/* ---------- cta: marquee, kinetic words, particles ---------- */
+.mg-in .mg-marquee { animation: mg-marquee 32s linear infinite; }
+@keyframes mg-marquee { to { transform: translateX(-50%); } }
+
+.mg-in .mg-word > span {
+  animation: mg-word 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes mg-word { from { transform: translateY(110%); } }
+
+.mg-particle { opacity: 0; }
+.mg-in .mg-particle { animation: mg-float-up var(--t, 6s) linear infinite; animation-delay: var(--d, 0ms); }
+@keyframes mg-float-up {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  15% { opacity: 0.9; }
+  100% { transform: translateY(-200px) scale(1); opacity: 0; }
+}
+
+
+/* ---------- footer: light running along the top rule ---------- */
+.mg-sweep { animation: mg-sweep 4.5s ease-in-out infinite; }
+@keyframes mg-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+
+/* ---------- step visuals ---------- */
+.mg-meter { width: 70%; }
+.mg-in .mg-meter { animation: mg-meter 2.6s ease-in-out infinite alternate; animation-delay: var(--d, 0ms); }
+@keyframes mg-meter { 0% { width: 35%; } 50% { width: 82%; } 100% { width: 58%; } }
+
+.mg-in .mg-rise-bar { animation: mg-rise-bar 1.1s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes mg-rise-bar { from { height: 0; } }
+
+.text-outline { color: transparent; -webkit-text-stroke: 1.5px #fdba74; }
+
+/* ---------- feature story: one card at a time on desktop ---------- */
+@media (min-width: 1024px) {
+  .fs-card { transition: opacity 0.6s ease, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
+  .fs-card.fs-on { opacity: 1; transform: none; border-color: #ea580c; }
+  .fs-card.fs-next { opacity: 0; transform: translateY(50px) scale(0.95); pointer-events: none; }
+  .fs-card.fs-past { opacity: 0; transform: translateY(-50px) scale(0.95); pointer-events: none; }
+}
+.fo-swap { animation: fo-swap 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes fo-swap { from { opacity: 0; transform: scale(0.3) rotate(-90deg); } }
+
+.fx-twinkle { animation: fx-twinkle var(--t, 4s) ease-in-out infinite; animation-delay: var(--d, 0s); }
+@keyframes fx-twinkle { 0%, 100% { opacity: 0.15; translate: 0 0; } 50% { opacity: 0.9; translate: 0 -14px; } }
+
+
+.fx-progress { transform: scaleX(0); transform-origin: 0 50%; }
+
+@media (prefers-reduced-motion: reduce) {
+  [class*='mg-'],
+  [class*='mg-'] *,
+  [class*='mg-']::after,
+  [class*='fx-'],
+  .fo-swap {
+    animation: none !important;
+  }
+  .fx-progress { display: none; }
+}
+
+/* ---------- how it works: auto-play stepper ---------- */
+.hw-fill { width: 100%; transform-origin: 0 50%; animation: hw-fill linear both; }
+@keyframes hw-fill { from { transform: scaleX(0); } }
+.hw-swap { animation: hw-swap 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes hw-swap { from { opacity: 0; transform: translateX(40px) scale(0.97); } }
+@media (prefers-reduced-motion: reduce) { .hw-fill, .hw-swap { animation: none; } }
+
+/* landing: every card edge in a light orange instead of grey */
+.lp .card-base { border-color: #fed7aa; }
+.lp .card-base:hover { border-color: #ea580c; }
+
+/* hero cartoon: blink, gentle nod, talking mouth */
+.hs-blink { transform-box: fill-box; transform-origin: center; animation: hs-blink 4s infinite; }
+@keyframes hs-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+.hs-nod { transform-box: fill-box; transform-origin: 50% 100%; animation: hs-nod 5s ease-in-out infinite; }
+@keyframes hs-nod { 0%, 100% { transform: rotate(0deg); } 30% { transform: rotate(-3deg); } 60% { transform: rotate(2deg); } }
+.hs-talk { transform-box: fill-box; transform-origin: center; animation: hs-talk 0.5s ease-in-out infinite alternate; }
+@keyframes hs-talk { from { transform: scaleY(0.6); } to { transform: scaleY(1.15); } }
+@media (prefers-reduced-motion: reduce) { .hs-blink, .hs-nod, .hs-talk { animation: none; } }

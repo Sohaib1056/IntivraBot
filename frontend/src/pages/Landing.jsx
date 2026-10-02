@@ -1,32 +1,46 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowRight, Bot, ShieldCheck, FileScan, Mic, ScanFace,
-  BarChart3, Languages, CheckCircle2, Mail, MapPin, Clock, Send,
+  BarChart3, Languages, Mail, MapPin, Clock, Send,
 } from 'lucide-react'
 import PublicNavbar from '../components/layout/PublicNavbar'
 import Button from '../components/ui/Button'
 import Logo from '../components/ui/Logo'
-import Reveal from '../components/ui/Reveal'
 import Spinner from '../components/ui/Spinner'
 import { Input, Textarea } from '../components/ui/Input'
 import { useToast } from '../context/ToastContext'
+import HeroSection from '../components/landing/HeroSection'
+import FeatureStory from '../components/landing/FeatureStory'
+import HowScroll from '../components/landing/HowScroll'
+import RolesSection from '../components/landing/RolesSection'
+import ChatDemo from '../components/landing/ChatDemo'
+import ContactFlight from '../components/landing/ContactFlight'
+import CtaBand from '../components/landing/CtaBand'
+import { Split, usePageFx } from '../components/landing/Fx'
+import '../components/landing/motion.css'
 import { isEmail } from '../lib/validators'
 
 const features = [
-  { icon: FileScan, title: 'ATS Resume Scanning', desc: 'Resumes are parsed, skills & experience extracted, then matched to the job.' },
-  { icon: Bot, title: 'AI Interviews', desc: 'Gemini-powered adaptive questions - text or voice, in real time.' },
-  { icon: ScanFace, title: 'Face Verification', desc: 'Matched against the registration photo - the real candidate, no proxies.' },
-  { icon: Mic, title: 'Voice Biometrics', desc: 'A voice fingerprint confirms the speaker and detects multiple voices.' },
-  { icon: BarChart3, title: 'Emotion Analysis', desc: 'Confidence, stress and engagement measured on every question.' },
-  { icon: Languages, title: 'Multi-language', desc: 'English and Urdu - candidates interview in their preferred language.' },
+  { icon: FileScan, short: 'ATS', title: 'ATS Resume Scanning', desc: 'Resumes are parsed, skills & experience extracted, then matched to the job.',
+    points: ['PDF & DOCX parsing', '150+ skill taxonomy', 'Match score per job'], stat: ['92%', 'avg. match accuracy'] },
+  { icon: Bot, short: 'Interview', title: 'AI Interviews', desc: 'Gemini-powered adaptive questions - text or voice, in real time.',
+    points: ['Follow-ups based on answers', 'HR custom questions', 'Field-specific rubrics'], stat: ['10', 'field rubrics'] },
+  { icon: ScanFace, short: 'Face', title: 'Face Verification', desc: 'Matched against the registration photo - the real candidate, no proxies.',
+    points: ['Live face match', 'Gaze & presence checks', 'Proctoring screenshots'], stat: ['24/7', 'monitoring in session'] },
+  { icon: Mic, short: 'Voice', title: 'Voice Biometrics', desc: 'A voice fingerprint confirms the speaker and detects multiple voices.',
+    points: ['Voice enrolment', 'Speaker match per answer', 'Multiple-voice alerts'], stat: ['1', 'voice per candidate'] },
+  { icon: BarChart3, short: 'Emotion', title: 'Emotion Analysis', desc: 'Confidence, stress and engagement measured on every question.',
+    points: ['Per-question scores', 'Confidence & stress', 'Included in the report'], stat: ['3', 'signals tracked live'] },
+  { icon: Languages, short: 'EN / UR', title: 'Multi-language', desc: 'English and Urdu - candidates interview in their preferred language.',
+    points: ['English & Urdu', 'Roman Urdu support', 'Same scoring in both'], stat: ['2', 'languages'] },
 ]
 
 const steps = [
-  { n: '01', t: 'Apply', d: 'Candidate uploads a CV and gets an ATS match score.' },
-  { n: '02', t: 'Verify', d: 'Face + voice check confirms the real candidate.' },
-  { n: '03', t: 'Interview', d: 'AI asks adaptive questions, emotion monitored live.' },
-  { n: '04', t: 'Report', d: 'Scores, strengths and shortlist - sent to both sides.' },
+  { n: '01', icon: FileScan, t: 'Apply', d: 'Candidate uploads a CV and gets an ATS match score.' },
+  { n: '02', icon: ScanFace, t: 'Verify', d: 'Face + voice check confirms the real candidate.' },
+  { n: '03', icon: Bot, t: 'Interview', d: 'AI asks adaptive questions, emotion monitored live.' },
+  { n: '04', icon: BarChart3, t: 'Report', d: 'Scores, strengths and shortlist - sent to both sides.' },
 ]
 
 const faqs = [
@@ -37,141 +51,45 @@ const faqs = [
 ]
 
 export default function Landing() {
+  const root = useRef(null)
+  // Must run after the pinned scenes register (children's effects run first).
+  usePageFx(root)
+
   return (
-    <div className="min-h-screen bg-white">
+    <div ref={root} className="lp min-h-screen overflow-x-clip bg-white">
+      {/* scroll progress */}
+      <div className="fx-progress fixed inset-x-0 top-0 z-[70] h-[3px] bg-brand-600" aria-hidden="true" />
       <PublicNavbar />
 
-      {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 bg-gradient-to-b from-brand-50/70 to-transparent" />
-        {/* Floating decorative accents */}
-        <div className="animate-float pointer-events-none absolute -left-10 top-24 -z-10 h-40 w-40 rounded-full bg-brand-100/60 blur-2xl" />
-        <div className="animate-float pointer-events-none absolute right-0 top-10 -z-10 h-52 w-52 rounded-full bg-brand-200/40 blur-3xl" style={{ animationDelay: '1.5s' }} />
-
-        <div className="mx-auto max-w-7xl px-5 pb-12 pt-8 sm:px-6">
-          <div className="mx-auto max-w-3xl text-center">
-            <span className="animate-fade-up inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700">
-              <ShieldCheck className="h-3.5 w-3.5" /> AI-powered · Unbiased · Secure
-            </span>
-            <h1 className="animate-fade-up mt-4 text-4xl font-extrabold leading-tight tracking-tight text-ink-900 sm:text-5xl" style={{ animationDelay: '80ms' }}>
-              Hire smarter with{' '}
-              <span className="text-brand-600">AI-driven interviews</span>
-            </h1>
-            <p className="animate-fade-up mx-auto mt-4 max-w-2xl text-lg text-ink-500" style={{ animationDelay: '160ms' }}>
-              IntivraBot automates the first round of recruitment - resume screening,
-              AI interviews, face &amp; voice verification, and detailed reports. Save HR
-              time and remove bias.
-            </p>
-            <div className="animate-fade-up mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row" style={{ animationDelay: '240ms' }}>
-              <Button as={Link} to="/register" size="lg" className="w-full sm:w-auto">
-                Start free <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button as={Link} to="/login" size="lg" variant="secondary" className="w-full sm:w-auto">
-                I already have an account
-              </Button>
-            </div>
-            <p className="animate-fade-up mt-3 text-xs text-ink-400" style={{ animationDelay: '320ms' }}>No credit card required · Free during beta</p>
-          </div>
-
-          {/* Hero accent panel (orange band, white text) */}
-          <div className="animate-pop mx-auto mt-8 max-w-4xl overflow-hidden rounded-2xl bg-brand-600 shadow-soft" style={{ animationDelay: '380ms' }}>
-            <div className="grid gap-px bg-brand-500 sm:grid-cols-3">
-              {[
-                ['80%', 'Less screening time'],
-                ['3-in-1', 'Resume + Interview + Emotion'],
-                ['0 bias', 'Objective scoring'],
-              ].map(([big, small]) => (
-                <div key={small} className="bg-brand-600 p-5 text-center text-white transition hover:bg-brand-700">
-                  <div className="text-3xl font-extrabold">{big}</div>
-                  <div className="mt-1 text-sm text-brand-100">{small}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section id="features" className="mx-auto max-w-7xl px-5 py-12 sm:px-6">
-        <Reveal className="mb-8 text-center">
-          <h2 className="text-3xl font-bold text-ink-900">One platform, the whole pipeline</h2>
-          <p className="mt-2 text-ink-500">Other tools cover a single stage - IntivraBot covers the entire journey.</p>
-        </Reveal>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map((f, i) => (
-            <Reveal key={f.title} delay={i * 80} className="card-base hover-lift p-6 hover:shadow-soft">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
-                <f.icon className="h-5 w-5" />
-              </span>
-              <h3 className="mt-4 text-base font-semibold text-ink-900">{f.title}</h3>
-              <p className="mt-1.5 text-sm text-ink-500">{f.desc}</p>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section id="how" className="border-y border-ink-200 bg-ink-50/60">
-        <div className="mx-auto max-w-7xl px-5 py-12 sm:px-6">
-          <Reveal className="mb-8 text-center">
-            <h2 className="text-3xl font-bold text-ink-900">How it works</h2>
-          </Reveal>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {steps.map((s, i) => (
-              <Reveal key={s.n} delay={i * 90} className="card-base hover-lift p-6 hover:shadow-soft">
-                <div className="text-2xl font-extrabold text-brand-600">{s.n}</div>
-                <h3 className="mt-2 text-base font-semibold text-ink-900">{s.t}</h3>
-                <p className="mt-1 text-sm text-ink-500">{s.d}</p>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Roles */}
-      <section id="roles" className="mx-auto max-w-7xl px-5 py-12 sm:px-6">
-        <div className="grid gap-4 md:grid-cols-2">
-          <Reveal as="div" className="card-base p-8">
-            <h3 className="text-xl font-bold text-ink-900">For Candidates</h3>
-            <ul className="mt-4 space-y-2.5">
-              {['Upload your CV and let AI extract your skills', 'Take an AI interview once you match', 'Get an instant score and feedback report'].map((t) => (
-                <li key={t} className="flex items-start gap-2 text-sm text-ink-600">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" /> {t}
-                </li>
-              ))}
-            </ul>
-            <Button as={Link} to="/register" className="mt-6">Apply as Candidate</Button>
-          </Reveal>
-          <Reveal as="div" delay={120} className="card-base p-8">
-            <h3 className="text-xl font-bold text-ink-900">For HR Managers</h3>
-            <ul className="mt-4 space-y-2.5">
-              {['Post a job and set your thresholds', 'Review ranked reports with fraud flags', 'Finalize your shortlist in one click'].map((t) => (
-                <li key={t} className="flex items-start gap-2 text-sm text-ink-600">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-brand-600" /> {t}
-                </li>
-              ))}
-            </ul>
-            <Button as={Link} to="/register" variant="secondary" className="mt-6">Hire with IntivraBot</Button>
-          </Reveal>
-        </div>
-      </section>
+      <HeroSection />
+      <FeatureStory features={features} />
+      <HowScroll steps={steps} />
+      <RolesSection />
 
       {/* FAQ */}
-      <section id="faq" className="border-t border-ink-200 bg-ink-50/60">
-        <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-          <Reveal className="mb-6 text-center">
-            <h2 className="text-3xl font-bold text-ink-900">Frequently asked</h2>
-          </Reveal>
-          <div className="space-y-3">
-            {faqs.map(([q, a], i) => (
-              <Reveal as="details" delay={i * 70} key={q} className="group card-base p-5 [&_summary]:cursor-pointer">
-                <summary className="flex list-none items-center justify-between text-sm font-semibold text-ink-900">
-                  {q}
-                  <span className="ml-4 text-brand-600 transition group-open:rotate-45">+</span>
-                </summary>
-                <p className="mt-3 text-sm text-ink-500">{a}</p>
-              </Reveal>
-            ))}
+      <section id="faq" className="relative isolate overflow-hidden border-t border-brand-100 bg-ink-50/60">
+        <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:py-10">
+          <div className="mb-4 text-center">
+            <span data-reveal className="inline-flex rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-700 ring-1 ring-brand-200">Got questions?</span>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-ink-900 sm:text-4xl">
+              <Split parts={['Frequently', ['asked', 'text-brand-600']]} />
+            </h2>
+          </div>
+          <div className="grid items-start gap-10 lg:grid-cols-5">
+            <div data-reveal className="lg:sticky lg:top-24 lg:col-span-2">
+              <ChatDemo />
+            </div>
+            <div data-stagger className="space-y-3 lg:col-span-3">
+              {faqs.map(([q, a]) => (
+                <details key={q} className="group card-base p-5 [&_summary]:cursor-pointer">
+                  <summary className="flex list-none items-center justify-between text-base font-semibold text-ink-900">
+                    {q}
+                    <span className="ml-4 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600 transition duration-300 group-open:rotate-45 group-open:bg-brand-600 group-open:text-white">+</span>
+                  </summary>
+                  <p className="mt-3 text-sm text-ink-700">{a}</p>
+                </details>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -180,25 +98,19 @@ export default function Landing() {
       <ContactSection />
 
       {/* CTA band */}
-      <section className="bg-brand-600">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-10 text-center sm:flex-row sm:px-6 sm:text-left">
-          <div className="text-white">
-            <h3 className="text-2xl font-bold">Ready to hire smarter?</h3>
-            <p className="mt-1 text-brand-100">Create your free account today.</p>
-          </div>
-          <Button as={Link} to="/register" variant="secondary" size="lg" className="shrink-0">
-            Get started free <ArrowRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </section>
+      <CtaBand />
 
       {/* Footer */}
       {/* A tinted ground, not white — the previous white-on-white footer had
           nothing to separate it from the section above and read as empty page. */}
-      <footer className="relative overflow-hidden border-t-2 border-brand-500 bg-ink-50">
+      <footer className="relative overflow-hidden bg-ink-50">
+        {/* brand rule with a light running along it */}
+        <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-brand-500" aria-hidden="true">
+          <span className="mg-sweep absolute inset-y-0 left-0 w-16 bg-white" />
+        </div>
 
-        <div className="relative mx-auto max-w-7xl px-5 pb-6 pt-9 sm:px-6">
-          <div className="grid gap-8 md:grid-cols-5 md:gap-6">
+        <div className="relative mx-auto max-w-[1600px] px-5 pb-6 pt-9 sm:px-6">
+          <div data-stagger className="grid gap-8 md:grid-cols-5 md:gap-6">
             {/* Brand column */}
             <div className="md:col-span-2">
               {/* Clickable too — someone who has read to the bottom is the
@@ -211,7 +123,7 @@ export default function Landing() {
               >
                 <Logo />
               </button>
-              <p className="mt-3 max-w-[19rem] text-sm leading-relaxed text-ink-500">
+              <p className="mt-3 max-w-[19rem] text-sm leading-relaxed text-ink-700">
                 AI-powered recruitment — resume screening, intelligent interviews,
                 and identity verification in one place.
               </p>
@@ -280,21 +192,21 @@ export default function Landing() {
           </div>
 
           {/* Bottom bar */}
-          <div className="mt-7 flex flex-col items-center justify-between gap-3 border-t border-ink-200 pt-4 sm:flex-row">
-            <p className="text-xs text-ink-500">
+          <div className="mt-7 flex flex-col items-center justify-between gap-3 border-t border-brand-100 pt-4 sm:flex-row">
+            <p className="text-xs text-ink-700">
               © {new Date().getFullYear()} IntivraBot · Final Year Project
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               {footerBadges.map(({ icon: Icon, label }) => (
                 <span
                   key={label}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-ink-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-700"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-700"
                 >
                   <Icon className="h-3 w-3 text-brand-600" />
                   {label}
                 </span>
               ))}
-              <span className="text-xs text-ink-500">Made with care in Pakistan 🇵🇰</span>
+              <span className="text-xs text-ink-700">Made with care in Pakistan 🇵🇰</span>
             </div>
           </div>
         </div>
@@ -305,7 +217,7 @@ export default function Landing() {
 
 const contactInfo = [
   { icon: Mail, label: 'Email us', value: 'hello@intivrabot.app' },
-  { icon: MapPin, label: 'Based in', value: 'Lahore, Pakistan' },
+  { icon: MapPin, label: 'Based in', value: 'Gujranwala, Pakistan' },
   { icon: Clock, label: 'Response time', value: 'Within 24 hours' },
 ]
 
@@ -314,7 +226,7 @@ const contactInfo = [
 // what makes them useful — a mailto opens a client, the map opens directions.
 const footerContact = [
   { icon: Mail, value: 'hello@intivrabot.app', href: 'mailto:hello@intivrabot.app' },
-  { icon: MapPin, value: 'Lahore, Pakistan', href: '#contact' },
+  { icon: MapPin, value: 'Gujranwala, Pakistan', href: '#contact' },
 ]
 
 // What the product actually guarantees, in the place people look for trust
@@ -384,50 +296,53 @@ function ContactSection() {
   }
 
   return (
-    <section id="contact" className="border-t border-ink-200 bg-white">
-      <div className="mx-auto max-w-7xl px-5 py-14 sm:px-6">
-        <Reveal className="mb-8 text-center">
-          <h2 className="text-3xl font-bold text-ink-900">Get in touch</h2>
-          <p className="mt-2 text-ink-500">Questions, feedback, or a demo request - we’d love to hear from you.</p>
-        </Reveal>
+    <section id="contact" className="relative isolate overflow-hidden border-t border-brand-100 bg-white">
+      <div className="mx-auto max-w-[1600px] px-5 py-8 sm:px-6 lg:py-10">
+        <div className="mb-4 text-center">
+          <h2 className="text-3xl font-semibold tracking-tight text-ink-900 sm:text-4xl">
+            <Split parts={['Get in', ['touch', 'text-brand-600']]} />
+          </h2>
+          <p data-reveal="0.1" className="mt-3 text-ink-700">Questions, feedback, or a demo request - we’d love to hear from you.</p>
+        </div>
 
         <div className="grid gap-8 lg:grid-cols-5">
           {/* Info side */}
-          <Reveal className="space-y-4 lg:col-span-2">
+          <div data-stagger className="space-y-2 lg:col-span-2">
+            <ContactFlight />
             {contactInfo.map((c) => (
-              <div key={c.label} className="card-base flex items-center gap-4 p-5">
+              <div key={c.label} className="card-base flex items-center gap-3 px-4 py-2.5">
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
                   <c.icon className="h-5 w-5" />
                 </span>
                 <div>
-                  <div className="text-sm text-ink-500">{c.label}</div>
+                  <div className="text-sm text-ink-700">{c.label}</div>
                   <div className="font-semibold text-ink-900">{c.value}</div>
                 </div>
               </div>
             ))}
-            <div className="rounded-xl bg-brand-600 p-5 text-white">
+            <div className="rounded-xl bg-brand-600 p-4 text-white">
               <p className="text-sm font-semibold">Prefer to jump right in?</p>
               <p className="mt-1 text-sm text-brand-100">Create a free account and explore the full platform.</p>
               <Button as={Link} to="/register" variant="secondary" size="sm" className="mt-3">
                 Start free <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
-          </Reveal>
+          </div>
 
           {/* Form side */}
-          <Reveal delay={120} className="lg:col-span-3">
-            <form onSubmit={submit} noValidate className="card-base space-y-4 p-6 sm:p-7">
+          <div data-reveal="0.15" className="lg:col-span-3">
+            <form onSubmit={submit} noValidate className="card-base space-y-3 p-5">
               <div className="grid gap-4 sm:grid-cols-2">
-                <Input label="Your name" placeholder="e.g. Ali Raza" value={form.name} onChange={set('name')} error={errors.name} />
+                <Input label="Your name" placeholder="e.g. Sohaib" value={form.name} onChange={set('name')} error={errors.name} />
                 <Input label="Email" type="email" placeholder="you@example.com" value={form.email} onChange={set('email')} error={errors.email} />
               </div>
-              <Textarea label="Message" rows={5} placeholder="How can we help?" value={form.message} onChange={set('message')} />
+              <Textarea label="Message" rows={3} placeholder="How can we help?" value={form.message} onChange={set('message')} />
               {errors.message && <p className="-mt-2 text-xs text-red-600">{errors.message}</p>}
               <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={loading}>
                 {loading ? (<><Spinner size={18} /> Sending…</>) : (<>Send message <Send className="h-4 w-4" /></>)}
               </Button>
             </form>
-          </Reveal>
+          </div>
         </div>
       </div>
     </section>
