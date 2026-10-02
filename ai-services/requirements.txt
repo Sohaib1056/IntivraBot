@@ -21,7 +21,22 @@ onnxruntime>=1.17
 numpy>=1.26
 
 # ── Voice biometrics: speaker verify + multi-voice (Phase 6) ─
-# Resemblyzer pulls torch (CPU), librosa, scikit-learn, webrtcvad.
+#
+# Pull torch from PyTorch's CPU index, not PyPI.
+#
+# The PyPI wheel carries the GPU runtime whether or not there is a GPU: on a
+# Railway container it is ~500 MB of CUDA libraries that can never be used, and
+# it is what pushes the build past the container's disk and memory limits. The
+# +cpu wheel is the same torch with that cut out — around 200 MB — so voice
+# verification keeps working and simply stops shipping a GPU stack to a
+# CPU-only box.
+#
+# --extra-index-url (not --index-url) so every other package still resolves
+# from PyPI as normal.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+# Resemblyzer pulls librosa, scikit-learn and webrtcvad on top of torch.
 # webrtcvad still imports pkg_resources, which setuptools>=81 removed —
 # so setuptools MUST stay <81 or the import fails on Python 3.14.
 resemblyzer>=0.1.4
