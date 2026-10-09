@@ -91,6 +91,9 @@ const voiceSampleSchema = new Schema(
     matched: { type: Boolean, default: null },
     multiVoice: { type: Boolean, default: false }, // more than one speaker heard
     voiceCount: { type: Number, default: 1 },
+    // Why the multi-voice check decided as it did (other-voice windows,
+    // separation from the candidate) — kept so a disputed flag can be audited.
+    multiDetail: { type: Schema.Types.Mixed, default: null },
     duration: { type: Number },
     // As above: a clip that was too quiet, clipped or too short to embed
     // reliably is recorded but never flagged.

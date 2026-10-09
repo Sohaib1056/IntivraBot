@@ -534,6 +534,7 @@ export const voice = asyncHandler(async (req, res) => {
     matched: result.match?.matched ?? null,
     multiVoice: Boolean(result.multiVoice),
     voiceCount: result.voiceCount ?? 1,
+    multiDetail: result.multiDetail ?? null,
     duration: result.duration,
     // A clip too quiet, clipped or short to embed reliably is kept for the
     // record but never counted against the candidate - see voice._audio_quality.

@@ -312,6 +312,11 @@ export default function Interview() {
   // Guards against firing the same report twice while one is in flight.
   const violationInFlightRef = useRef(false)
   const terminatedRef = useRef(false)
+  // Every "back to the interview" goes through here. Requests already in
+  // flight when the interview ends (an answer being scored, a reply) used to
+  // flip the page back to active a second later, and the interviewer started
+  // speaking again over the "interview ended" screen.
+  const resumeActive = () => { if (!terminatedRef.current) setPhase('active') }
 
   const recognitionRef = useRef(null)
   const silenceRef = useRef(null)
@@ -575,7 +580,7 @@ export default function Interview() {
       screenStreamRef.current = screenStream
       setSharing(true)
     }
-    setPhase('active')
+    resumeActive()
     // Start the server's clock now, not at /start — the pre-check must not eat
     // into the interview. Best-effort: a failed call leaves the clock unstarted,
     // which is generous to the candidate rather than punishing.
@@ -1290,6 +1295,7 @@ export default function Interview() {
   // mic straight afterwards. It must also run when speech synthesis is missing
   // or throws, or the candidate would be left with a dead mic and no button.
   function speak(text, onDone) {
+    if (terminatedRef.current) return
     const done = () => {
       speakingRef.current = false
       spokeEndRef.current = Date.now()
@@ -1361,6 +1367,7 @@ export default function Interview() {
   // has been silent for SILENCE_MS the answer is sent on its own. The AI then
   // decides whether it was a complete answer or needs a follow-up.
   function startRecording() {
+    if (terminatedRef.current) return
     if (!SpeechRecognition) return
     // Silence the interviewer BEFORE the microphone opens, and give the audio
     // stack a moment to actually stop.
@@ -1630,7 +1637,7 @@ export default function Interview() {
         // stale ref would prepend the previous utterance to the next answer.
         answerRef.current = ''
         setAnswer('')
-        setPhase('active')
+        resumeActive()
         return
       }
 
@@ -1663,7 +1670,7 @@ export default function Interview() {
       answerRef.current = ''
       setAnswer('')
       setReason('')
-      setPhase('active')
+      resumeActive()
     } catch (err) {
       // Drop the optimistic bubble — it was never recorded.
       setEntries((e) => (e[e.length - 1]?.side === 'candidate' ? e.slice(0, -1) : e))
@@ -1681,7 +1688,7 @@ export default function Interview() {
         return
       }
       setError(err.message || 'Could not submit your answer')
-      setPhase('active')
+      resumeActive()
     } finally {
       submittingRef.current = false
     }
@@ -1701,7 +1708,7 @@ export default function Interview() {
       }
     } catch (err) {
       setError(err.message || 'Could not finish the interview')
-      setPhase('active')
+      resumeActive()
     }
   }
 

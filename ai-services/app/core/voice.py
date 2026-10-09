@@ -39,6 +39,14 @@ _ENROLL_SPEECH_SEC = 3.0
 # different person's windows sit at 0.41-0.57.
 _OTHER_SIM = 0.60        # window below this vs the candidate => someone else
 _OTHER_MIN_WINDOWS = 4   # ~3s of the other voice before it counts
+# The "other" windows must also be a DIFFERENT voice from the candidate as
+# heard in this very clip. Similarity to the enrolled voiceprint alone is not
+# enough: a real candidate in a dark room speaking Roman Urdu matched their own
+# enrolment at only 0.71-0.76, so some of their windows dipped under
+# _OTHER_SIM and were taken for a second person. Their low windows are still
+# their voice, though, and sit close to the rest of the clip; a different
+# person does not (different speakers' centroids measured ~0.6).
+_SPLIT_SEP = 0.70
 _OTHER_COHERENCE = 0.70  # the "other" windows must be ONE consistent voice,
                          # not scattered noise that happens to score low
 # A window this close to the interviewer's (TTS) voiceprint, and closer to it
@@ -183,10 +191,16 @@ def _other_voice(partials, reference, interviewer=None) -> dict:
         return {"multi": False, "otherWindows": int(len(other)), "interviewerWindows": removed}
     centroid = _unit(other.mean(axis=0))
     coherence = float(np.mean(other @ centroid))
+    main = p[keep & (sim_c >= _OTHER_SIM)]
+    # The candidate's voice as heard in this clip; if they barely appear in it,
+    # fall back to the enrolled print.
+    own = _unit(main.mean(axis=0)) if len(main) >= 3 else ref
+    separation = float(centroid @ own)
     return {
-        "multi": coherence >= _OTHER_COHERENCE,
+        "multi": coherence >= _OTHER_COHERENCE and separation < _SPLIT_SEP,
         "otherWindows": int(len(other)),
         "coherence": round(coherence, 3),
+        "separation": round(separation, 3),
         "interviewerWindows": removed,
     }
 
