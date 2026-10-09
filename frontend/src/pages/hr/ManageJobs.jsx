@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Users, MapPin, Trash2, Circle, FolderKanban, Pencil, MessageSquare, Wallet, CalendarDays } from 'lucide-react'
+import { Plus, Users, MapPin, Trash2, Circle, FolderKanban, Pencil, MessageSquare, Wallet, CalendarDays, Eye } from 'lucide-react'
 import { Card, CardBody } from '../../components/ui/Card'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
@@ -92,11 +92,11 @@ export default function ManageJobs() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Button onClick={() => navigate(`/hr/applications?job=${j._id}`)} variant="secondary" size="sm">
-                      View applicants
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button onClick={() => navigate(`/hr/applications?job=${j._id}`)} variant="secondary" size="sm" className="whitespace-nowrap">
+                      <Eye className="h-3.5 w-3.5" /> View applicants
                     </Button>
-                    <Button as={Link} to={`/hr/jobs/${j._id}/edit`} variant="secondary" size="sm">
+                    <Button as={Link} to={`/hr/jobs/${j._id}/edit`} variant="secondary" size="sm" className="whitespace-nowrap">
                       <Pencil className="h-3.5 w-3.5" /> Edit
                     </Button>
                     <button

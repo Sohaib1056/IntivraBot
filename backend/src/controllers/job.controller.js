@@ -30,6 +30,9 @@ export const listJobs = asyncHandler(async (req, res) => {
   const pageNum = Math.max(1, Number(page))
   const perPage = Math.min(50, Math.max(1, Number(limit)))
   const isCandidate = req.user?.role === 'candidate'
+  // Candidates only see jobs still taking applications — a passed deadline
+  // hides the job from the board (HR still sees it, marked expired).
+  if (isCandidate) filter.$or = [{ deadline: null }, { deadline: { $gte: new Date() } }]
 
   // Sorting or filtering by match needs every job scored, not just one page —
   // a job on page 3 can easily be the best fit. Candidates' boards are small
