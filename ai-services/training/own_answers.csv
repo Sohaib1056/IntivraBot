@@ -1,0 +1,85 @@
+question,answer,label
+What is React?,"React is a JavaScript library for building user interfaces with reusable components. It uses a virtual DOM to update only the parts of the page that change, and state and props control how components render.",good
+What is React?,"React is a frontend library by Meta. We build the UI as components, pass data with props, keep local data in state, and hooks like useState and useEffect handle state and side effects.",good
+What is React?,"React is used to make websites. It has components I think and it is popular.",average
+What is React?,"It is a frontend thing in JavaScript, we use it for UI pages.",average
+What is React?,"I don't know.",poor
+What is React?,"React is a database for storing data.",poor
+What is the difference between SQL and NoSQL databases?,"SQL databases are relational with fixed schemas and tables, they use joins and give strong ACID transactions. NoSQL like MongoDB stores flexible documents, scales horizontally easily and suits changing or unstructured data.",good
+What is the difference between SQL and NoSQL databases?,"SQL uses tables with rows and columns and a fixed schema, for example MySQL. NoSQL stores data as documents or key value pairs, like MongoDB, so the schema can change and it scales out well.",good
+What is the difference between SQL and NoSQL databases?,"SQL has tables and NoSQL does not have tables, it is more flexible.",average
+What is the difference between SQL and NoSQL databases?,"Both store data but NoSQL is newer and faster I think.",average
+What is the difference between SQL and NoSQL databases?,"Sorry I am not sure about this.",poor
+What is the difference between SQL and NoSQL databases?,"SQL is a programming language for making websites.",poor
+Explain REST API.,"A REST API exposes resources over HTTP using URLs, and clients use methods like GET, POST, PUT and DELETE on them. It is stateless, so every request carries what it needs, and responses are usually JSON with proper status codes.",good
+Explain REST API.,"REST is an architecture for web services where each resource has an endpoint. GET reads, POST creates, PUT updates and DELETE removes. The server does not keep session state between requests and returns status codes like 200 or 404.",good
+Explain REST API.,"It is an API that frontend calls to get data from the backend, using GET and POST.",average
+Explain REST API.,"REST API connects two applications over the internet.",average
+Explain REST API.,"Can you repeat the question please.",poor
+Explain REST API.,"REST means the server is resting when not used.",poor
+What is object oriented programming?,"OOP organises code into classes and objects. Its four pillars are encapsulation, inheritance, polymorphism and abstraction, which make code reusable, easier to maintain and closer to real world models.",good
+What is object oriented programming?,"In OOP we model things as objects that have data and methods. Encapsulation hides internal data, inheritance lets a class reuse another class, polymorphism lets one interface have many forms, and abstraction hides complexity.",good
+What is object oriented programming?,"OOP uses classes and objects, like a car class and its objects.",average
+What is object oriented programming?,"It is a way of programming with objects and inheritance.",average
+What is object oriented programming?,"Hello, I don't remember.",poor
+What is object oriented programming?,"It means programming only with Python.",poor
+How do you handle a conflict in your team?,"I first listen to both sides privately to understand the actual issue, then bring the people together and focus on the goal rather than the person. We agree on a solution, and I follow up later to make sure it worked.",good
+How do you handle a conflict in your team?,"I try to stay calm, understand everyone's point of view, find common ground and agree on a clear next step. If it still blocks the work I involve the team lead, and I keep communication respectful.",good
+How do you handle a conflict in your team?,"I talk to them and try to solve it.",average
+How do you handle a conflict in your team?,"I tell my manager about it so he can handle it.",average
+How do you handle a conflict in your team?,"I ignore it.",poor
+How do you handle a conflict in your team?,"I don't know, I never had conflict.",poor
+Tell me about yourself.,"I am a software engineering graduate with experience in React and Node.js. In my final year project I built an AI interview platform, and I did an internship where I developed REST APIs. I enjoy solving problems and learning new tools.",good
+Tell me about yourself.,"I recently completed my BS in Computer Science. I have worked on web projects using MERN stack, built a few freelance websites, and I am looking for a role where I can grow as a full stack developer.",good
+Tell me about yourself.,"I am a student, I like programming and computers.",average
+Tell me about yourself.,"My name is Ali and I live in Lahore and I did my degree.",average
+Tell me about yourself.,"Okay.",poor
+Tell me about yourself.,"Nothing much.",poor
+What is the difference between let and const in JavaScript?,"Both are block scoped. A variable declared with let can be reassigned, while const cannot be reassigned after declaration, though the contents of a const object or array can still change. Unlike var, neither is hoisted in a usable way.",good
+What is the difference between let and const in JavaScript?,"let allows reassignment and const does not. Both have block scope, unlike var which is function scoped, and const objects can still be mutated internally.",good
+What is the difference between let and const in JavaScript?,"const is constant and let can be changed.",average
+What is the difference between let and const in JavaScript?,"They are both used to make variables in JavaScript.",average
+What is the difference between let and const in JavaScript?,"I have not used JavaScript.",poor
+What is the difference between let and const in JavaScript?,"let is for numbers and const is for strings.",poor
+What is machine learning?,"Machine learning is a branch of AI where models learn patterns from data instead of being explicitly programmed. In supervised learning we train on labelled data, in unsupervised learning we find structure like clusters, and we evaluate models on unseen test data.",good
+What is machine learning?,"ML lets a computer learn from examples. We give it training data, it learns weights that map inputs to outputs, and then predicts on new data. Examples are spam detection, recommendations and image recognition.",good
+What is machine learning?,"It is when computers learn from data to make predictions.",average
+What is machine learning?,"Machine learning is part of artificial intelligence.",average
+What is machine learning?,"I am not sure.",poor
+What is machine learning?,"Machine learning is fixing machines in a factory.",poor
+What is Git and why do we use it?,"Git is a distributed version control system. It tracks changes in code with commits, lets developers work on separate branches and merge them, and makes it possible to roll back mistakes and collaborate through platforms like GitHub.",good
+What is Git and why do we use it?,"Git keeps the history of a project. Each developer has a full copy of the repo, works on a branch, commits changes, and merges them through pull requests, so teams can collaborate safely.",good
+What is Git and why do we use it?,"Git is used to save code online on GitHub.",average
+What is Git and why do we use it?,"Git is for version control.",average
+What is Git and why do we use it?,"I have never heard of it.",poor
+What is Git and why do we use it?,"Git is a programming language.",poor
+How would you test a login page?,"I would test valid and invalid credentials, empty fields, password masking, error messages, account lockout after failed attempts, SQL injection and XSS inputs, session handling after login and logout, and behaviour on mobile and different browsers.",good
+How would you test a login page?,"Positive cases with correct details, negative cases with wrong password or unregistered email, boundary tests on field length, security checks like brute force and injection, and checking the forgot password flow and redirects.",good
+How would you test a login page?,"I will enter correct and wrong password and check it.",average
+How would you test a login page?,"I will check if the login button works.",average
+How would you test a login page?,"I will just login.",poor
+How would you test a login page?,"Can you repeat please, I didn't understand.",poor
+What is normalization in databases?,"Normalization organises tables to reduce redundancy and anomalies. First normal form removes repeating groups, second removes partial dependencies on a composite key, and third removes transitive dependencies, usually by splitting tables and linking them with foreign keys.",good
+What is normalization in databases?,"It is the process of splitting data into related tables so the same data is not stored twice. It follows normal forms like 1NF, 2NF and 3NF and avoids insert, update and delete anomalies.",good
+What is normalization in databases?,"It means removing duplicate data from tables.",average
+What is normalization in databases?,"Making the database normal and clean.",average
+What is normalization in databases?,"I forgot.",poor
+What is normalization in databases?,"Normalization means making the database faster with more RAM.",poor
+Why do you want to work with us?,"Your company builds products used by many people and invests in its engineers. My skills in React and Node match this role, and I want to contribute to real products while learning from an experienced team.",good
+Why do you want to work with us?,"I researched your work in fintech and I like that the team ships quickly. The role fits my backend experience and I see a clear path to grow here over the next few years.",good
+Why do you want to work with us?,"Because it is a good company and I need a job.",average
+Why do you want to work with us?,"I heard the environment is good.",average
+Why do you want to work with us?,"For the salary.",poor
+Why do you want to work with us?,"No reason.",poor
+What is a computer network?,"A network connects devices so they can share data and resources. Examples are LAN and WAN, devices use switches and routers, and communication follows protocols like TCP/IP, where IP addresses identify devices and ports identify services.",good
+What is a computer network?,"It is a group of connected computers that communicate using protocols such as TCP and UDP. Routers forward traffic between networks, switches connect devices inside a LAN, and DNS converts domain names to IP addresses.",good
+What is a computer network?,"When computers are connected together with cables or WiFi.",average
+What is a computer network?,"Internet is a network.",average
+What is a computer network?,"I don't know about networking.",poor
+What is a computer network?,"It is a social network like Facebook.",poor
+Explain the difference between a process and a thread.,"A process is an independent program in execution with its own memory space, while a thread is a lighter unit of execution inside a process that shares its memory. Threads are cheaper to create and switch, but shared memory needs synchronisation to avoid race conditions.",good
+Explain the difference between a process and a thread.,"Processes are isolated from each other and have separate address spaces. Threads belong to one process and share its heap, so communication is faster but we need locks or mutexes to keep data consistent.",good
+Explain the difference between a process and a thread.,"A thread is a small part of a process.",average
+Explain the difference between a process and a thread.,"Process is big and thread is small.",average
+Explain the difference between a process and a thread.,"Hmm, next question.",poor
+Explain the difference between a process and a thread.,"They are the same thing.",poor

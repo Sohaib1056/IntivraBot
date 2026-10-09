@@ -565,6 +565,18 @@ def score_answer(question, answer, job_title, job_skills, language="English", fi
                 "improvements": _as_list(data.get("improvements")),
             }
 
+    # Gemini and Groq both failed: use our own locally trained model
+    # (training/train.py) before the rule-based heuristic.
+    from . import answer_model
+    result = answer_model.predict(answer)
+    if result:
+        return {
+            "score": result["score"],
+            "feedback": f"Scored by IntivraBot's own model ({result['label']}).",
+            "strengths": [],
+            "improvements": [],
+        }
+
     return _fallback_score(answer, job_skills)
 
 
