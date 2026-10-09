@@ -187,3 +187,9 @@ class VoiceAnalyzeRequest(BaseModel):
     audio: str = Field(..., description="Base64 of Int16 PCM (mono)")
     sampleRate: int = Field(default=16000)
     reference: list[float] | None = Field(default=None, description="Reference speaker embedding")
+    interviewer: list[float] | None = Field(default=None, description="Interviewer (TTS) voiceprint to ignore")
+
+
+class VoiceEmbedRequest(BaseModel):
+    audio: str = Field(..., description="Base64 of Int16 PCM (mono)")
+    sampleRate: int = Field(default=16000)

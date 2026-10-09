@@ -136,8 +136,9 @@ export const aiService = {
   // Whether the speaker model (Resemblyzer) is available ({ voiceEnabled }).
   voiceStatus: () => get('/api/voice/status'),
   // Analyse one answer's audio (Int16 PCM base64) vs an optional reference embedding.
-  voiceAnalyze: (audio, sampleRate, reference) =>
-    post('/api/voice/analyze', { audio, sampleRate, reference }),
+  voiceAnalyze: (audio, sampleRate, reference, interviewer) =>
+    post('/api/voice/analyze', { audio, sampleRate, reference, interviewer }),
+  voiceEmbed: (audio, sampleRate) => post('/api/voice/embed', { audio, sampleRate }),
 
   // ── Visual proctoring (Phase 7) ──
   // Which checks are actually available ({ gazeEnabled, visionEnabled, checks }).

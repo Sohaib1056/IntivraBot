@@ -145,6 +145,8 @@ const VOICE_SAMPLE_MS = 15000
 // Seconds of audio taken per sample. Long enough for the speaker model to
 // embed reliably, short enough not to hold the uplink.
 const VOICE_SAMPLE_SECONDS = 4
+// Room audio this soon after the interviewer stops is ignored (speaker echo).
+const TTS_ECHO_MS = 1500
 // Recent frames kept in memory to smooth the on-screen status. A single bad
 // frame should never make the UI shout at the candidate.
 const HISTORY_LEN = 5
@@ -271,6 +273,15 @@ export default function Interview() {
   // interviewer was mid-sentence *at that instant* — `speaking` would be a
   // render behind and the guard would miss exactly the case it exists for.
   const speakingRef = useRef(false)
+  // When the interviewer last stopped talking — the speaker's echo lingers a
+  // moment, so the room monitor ignores audio until shortly after this.
+  const spokeEndRef = useRef(0)
+  // Mic audio heard WHILE the interviewer talks: that is the TTS voice through
+  // this candidate's speaker, learned once so the server can tell it apart
+  // from a real second person.
+  const ttsChunksRef = useRef([])
+  const interviewerLearnedRef = useRef(false)
+  const interviewerTriesRef = useRef(0)
 
   const [mode, setMode] = useState('voice') // 'voice' | 'text'
   const [reason, setReason] = useState('')
@@ -381,7 +392,7 @@ export default function Interview() {
             side: 'candidate',
             kind: 'answer',
             text: q.answer,
-            meta: { score: q.score, feedback: q.feedback, order: q.order },
+            meta: { order: q.order },
           })
         })
         if (res.currentQuestion) {
@@ -1093,12 +1104,32 @@ export default function Interview() {
       const processor = ctx.createScriptProcessor(4096, 1, 1)
       processor.onaudioprocess = (e) => {
         const frame = e.inputBuffer.getChannelData(0)
+        // The laptop speaker reaches the mic, so anything captured while the
+        // interviewer talks (or its echo just after) contains a second voice.
+        // The mic stays open then for barge-in, but none of it is recorded for
+        // the voice checks — that is what flagged honest candidates.
+        const interviewerAudible =
+          speakingRef.current || Date.now() - spokeEndRef.current < TTS_ECHO_MS
+        if (speakingRef.current && !interviewerLearnedRef.current) {
+          const tts = ttsChunksRef.current
+          tts.push(new Float32Array(frame))
+          const cap = Math.ceil((srcSampleRateRef.current * 10) / frame.length)
+          if (tts.length > cap) tts.splice(0, tts.length - cap)
+        }
         // The answer buffer only fills while they are actually answering.
-        if (capturingRef.current) pcmChunksRef.current.push(new Float32Array(frame))
+        if (capturingRef.current && !interviewerAudible) pcmChunksRef.current.push(new Float32Array(frame))
         // The monitor buffer always fills, because the point is to hear what
         // happens when the candidate is NOT the one talking. Bounded so a long
         // silence between samples cannot grow it without limit.
         const monitor = monitorChunksRef.current
+        // Drop anything heard while the interviewer is talking or just after.
+        // Checking only at sample time was not enough: a reply that finished a
+        // second before the check was still in the buffer, so the candidate's
+        // voice plus the TTS read as "multiple voices".
+        if (interviewerAudible) {
+          monitor.length = 0
+          return
+        }
         monitor.push(new Float32Array(frame))
         const cap = Math.ceil(
           (srcSampleRateRef.current * VOICE_SAMPLE_SECONDS) / frame.length
@@ -1176,10 +1207,12 @@ export default function Interview() {
         // streak to build — a clip with two people audible, or one that is
         // demonstrably not the enrolled speaker, is reported on its own. The
         // reference clip itself is never judged: it is what defines the match.
-        if (!res.isReference) {
-          if (res.multiVoice) reportViolation('multiple_voices')
-          else if (res.match?.matched === false) reportViolation('voice_mismatch')
-        }
+        // A second person is a strike. The server now judges it against the
+        // candidate's enrolled voiceprint, ignores the interviewer's own voice
+        // and needs ~4s of one consistent other voice, so fans, echo and the
+        // TTS no longer trigger it. Voice mismatch alone stays a report flag:
+        // it proved too sensitive to microphones and rooms to end interviews.
+        if (!res.isReference && res.multiVoice) reportViolation('multiple_voices')
         // The server pairs this clip against the frames captured while it was
         // recorded, so it can spot a voice with nobody in shot — something
         // neither check can see alone.
@@ -1257,7 +1290,13 @@ export default function Interview() {
   // mic straight afterwards. It must also run when speech synthesis is missing
   // or throws, or the candidate would be left with a dead mic and no button.
   function speak(text, onDone) {
-    const done = () => { speakingRef.current = false; setSpeaking(false); onDone?.() }
+    const done = () => {
+      speakingRef.current = false
+      spokeEndRef.current = Date.now()
+      setSpeaking(false)
+      learnInterviewerVoice()
+      onDone?.()
+    }
     if (typeof window === 'undefined' || !window.speechSynthesis || !text) {
       done()
       return
@@ -1274,6 +1313,9 @@ export default function Interview() {
       // machine reading rather than someone talking.
       u.rate = 0.95
       u.pitch = 1
+      // Flag it before onstart: the browser can start playing a moment before
+      // the event fires, and that moment must not land in an answer clip.
+      speakingRef.current = true
       u.onstart = () => { speakingRef.current = true; setSpeaking(true) }
       u.onend = done
       u.onerror = done
@@ -1282,9 +1324,33 @@ export default function Interview() {
       done()
     }
   }
+  // Send what the mic heard of the interviewer (once, a few tries at most).
+  function learnInterviewerVoice() {
+    const chunks = ttsChunksRef.current
+    ttsChunksRef.current = []
+    if (interviewerLearnedRef.current || !voiceEnabled || !interview?._id || isPractice) return
+    if (interviewerTriesRef.current >= 3) return
+    const total = chunks.reduce((n, c) => n + c.length, 0)
+    if (total < srcSampleRateRef.current * 3) return // need ~3s of it
+    interviewerTriesRef.current += 1
+    const merged = new Float32Array(total)
+    let off = 0
+    for (const c of chunks) { merged.set(c, off); off += c.length }
+    const pcm16 = toInt16_16k(merged, srcSampleRateRef.current)
+    api.post(`/interviews/${interview._id}/interviewer-voice`, {
+      audio: int16ToBase64(pcm16), sampleRate: 16000,
+    })
+      .then((r) => { if (r?.learned) interviewerLearnedRef.current = true })
+      .catch(() => { /* best effort */ })
+  }
+
   function stopSpeaking() {
+    // Cut short (usually the candidate barging in): what was buffered may hold
+    // their voice, so it must never be learned as the interviewer's.
+    ttsChunksRef.current = []
     try { window.speechSynthesis?.cancel() } catch { /* ignore */ }
     speakingRef.current = false
+    spokeEndRef.current = Date.now()
     setSpeaking(false)
   }
 
@@ -1568,7 +1634,6 @@ export default function Interview() {
         return
       }
 
-      setLastResult({ score: res.score, feedback: res.feedback })
       setEntries((e) => {
         const next = [...e]
         const mine = next[next.length - 1]
@@ -1576,11 +1641,8 @@ export default function Interview() {
         // showed the most recent one, so by the end a candidate could not see
         // how any earlier answer had done — the scoring existed but was
         // invisible past the next question.
-        if (mine?.side === 'candidate') {
-          mine.meta = { score: res.score, feedback: res.feedback, order: current?.order }
-        }
-        // An aside answered alongside the answer.
-        if (res.reply) next.push({ side: 'ai', kind: 'reply', text: res.reply, meta: {} })
+        // No score on the bubble: marks are for the employer's report, and
+        // showing them live made candidates second-guess every next answer.
         if (res.nextQuestion) {
           next.push({
             side: 'ai',
@@ -1608,6 +1670,10 @@ export default function Interview() {
       // The server closed the interview under us (away too long, or out of
       // time). It is already scored, so send them to the report rather than
       // leaving them retrying an answer that can no longer be accepted.
+      if (err.status === 410 && err.details?.endedReason === 'violation') {
+        applyServerWarning({ terminated: true, detail: err.details.terminatedFor, message: '' })
+        return
+      }
       if (err.status === 410) {
         setClosedMessage(err.message || '')
         setError('closed')
@@ -1795,24 +1861,12 @@ export default function Interview() {
                 <Sparkles className="h-3.5 w-3.5" /> Practice
               </Badge>
             )}
-            {(() => {
-              // geminiEnabled reflects the service's status at interview start;
-              // current?.source reflects whether *this* question actually came
-              // from Gemini or the offline bank (e.g. a mid-interview outage).
-              const liveNow = geminiEnabled && current?.source !== 'fallback'
-              return (
-                <span
-                  title={liveNow ? 'Questions are being generated live' : 'Using the offline question bank'}
-                  className={cn(
-                    'hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium sm:inline-flex',
-                    liveNow ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                  )}
-                >
-                  <span className={cn('h-1.5 w-1.5 rounded-full', liveNow ? 'bg-emerald-500' : 'bg-amber-500')} />
-                  {liveNow ? 'AI live' : 'Offline mode'}
-                </span>
-              )
-            })()}
+            {/* Same badge whatever produced the question — candidates are never
+                told which engine or fallback is behind the interview. */}
+            <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Live
+            </span>
 
             {/* Time left. Shown from the start rather than sprung as a warning
                 near the end — a candidate pacing themselves needs to know. */}

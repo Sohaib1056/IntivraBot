@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Volume2, Sparkles, User, AlertTriangle, HelpCircle } from 'lucide-react'
+import { Volume2, Bot, User, AlertTriangle, HelpCircle } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
 /**
@@ -120,7 +120,7 @@ function Bubble({ entry, live, speaking, onReplay }) {
               meta?.source === 'hr' ? 'bg-brand-100 text-brand-700' : 'bg-ink-200 text-ink-600'
             )}
           >
-            <Sparkles className="h-2.5 w-2.5" />
+            <Bot className="h-2.5 w-2.5" />
           </span>
           <span className="text-[11px] font-semibold text-ink-400">
             {meta?.source === 'hr' ? 'From the employer' : 'Interviewer'}

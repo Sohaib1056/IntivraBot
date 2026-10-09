@@ -837,9 +837,9 @@ function Terms({
               : 'There is no time limit. Take a moment to think before you speak.'}
           </Expect>
           <Expect icon={Brain} title="A real conversation, driven by your answers">
-            An AI interviewer listens to what you say, understands it, and
-            chooses the next question from it — a vague answer gets followed up,
-            a strong one moves you on. It is not a fixed list of questions.
+            An AI interviewer listens to what you say and chooses the next
+            question from it. Each answer you give moves you to the next
+            question. It is not a fixed list of questions.
           </Expect>
           <Expect icon={Volume2} title={`Answer out loud in ${language}`}>
             {allowTextAnswers
@@ -859,10 +859,10 @@ function Terms({
       <section className="mt-4 rounded-xl border border-ink-200 bg-white p-5 shadow-sm sm:p-6">
         <SectionHeading n="2" title="How you are scored" />
         <ul className="mt-4 space-y-4">
-          <Expect icon={CheckCircle2} title="Every answer is scored as you go">
-            You see the score and a line of feedback for each answer right after
-            you give it. Your final result is the average across all
-            {' '}{totalQuestions} questions.
+          <Expect icon={CheckCircle2} title="Every answer is scored">
+            Each answer is assessed after you give it. Your final result is the
+            average across all {totalQuestions} questions, and you can see it in
+            your report once the interview is finished.
           </Expect>
           <Expect icon={AlertTriangle} title="An unanswered question scores zero">
             If the interview ends early — time runs out, you leave, or a rule is
@@ -920,8 +920,9 @@ function Terms({
           <ul className="mt-3 space-y-4">
           <Expect icon={Users} title="Stay alone and in frame" tone="red">
             Another person visible on camera, or you leaving the camera&apos;s
-            view, is a violation. So is another voice answering, or a voice that
-            does not match your enrolled one.
+            view, is a violation. So is another person&apos;s voice speaking
+            during the interview. The interviewer&apos;s own voice and background
+            noise like a fan are ignored.
           </Expect>
           <Expect icon={Eye} title="It must be you, live" tone="red">
             Your face and voice are matched against your profile, and the camera

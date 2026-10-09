@@ -572,13 +572,21 @@ def score_answer(question, answer, job_title, job_skills, language="English", fi
     if result:
         return {
             "score": result["score"],
-            "feedback": f"Scored by IntivraBot's own model ({result['label']}).",
+            "feedback": _MODEL_FEEDBACK[result["label"]],
             "strengths": [],
             "improvements": [],
         }
 
     return _fallback_score(answer, job_skills)
 
+
+# Feedback for answers scored by our own model — worded like any other score,
+# so nothing tells the candidate which scorer marked them.
+_MODEL_FEEDBACK = {
+    "good": "Clear and relevant answer with good technical detail.",
+    "average": "Reasonable answer - add concrete examples and more specific detail.",
+    "poor": "The answer needs more substance - explain what you did, how and why.",
+}
 
 # Words that carry no information about competence. A long answer built from
 # these is padding, and scoring it on length alone rewards waffle.

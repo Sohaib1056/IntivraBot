@@ -32,6 +32,21 @@ _RELIABLE_SPEECH_SEC = 2.0
 # against it: every later answer is judged against this one clip.
 _ENROLL_SPEECH_SEC = 3.0
 
+# ── Multi-voice (two different people) ──
+# Each "partial" is a ~1.6s window of speech, stepped ~0.77s. Calibrated on
+# synthetic clips (TTS voices + fan noise + room echo): the enrolled speaker's
+# own windows stay >= 0.63 even under very loud fan noise or echo, while a
+# different person's windows sit at 0.41-0.57.
+_OTHER_SIM = 0.60        # window below this vs the candidate => someone else
+_OTHER_MIN_WINDOWS = 4   # ~3s of the other voice before it counts
+_OTHER_COHERENCE = 0.70  # the "other" windows must be ONE consistent voice,
+                         # not scattered noise that happens to score low
+# A window this close to the interviewer's (TTS) voiceprint, and closer to it
+# than to the candidate, is the interviewer leaking through the speaker. Leaked
+# TTS windows measured 0.84-0.92 against it; different people sit ~0.45, so a
+# real second person is never mistaken for the interviewer.
+_INTERVIEWER_SIM = 0.78
+
 
 def voice_available() -> bool:
     try:
@@ -142,7 +157,58 @@ def _audio_quality(pcm: np.ndarray, speech: np.ndarray, sr: int) -> dict:
     }
 
 
-def analyze(audio_b64: str, sample_rate: int = 16000, reference=None) -> dict:
+def _unit(v):
+    v = np.asarray(v, dtype=np.float32)
+    return v / (np.linalg.norm(v) + 1e-9)
+
+
+def _other_voice(partials, reference, interviewer=None) -> dict:
+    """Find a second, distinct speaker against the candidate's own voiceprint.
+
+    Background noise and echo are not a problem here: VAD already dropped
+    non-speech, and what remains of the candidate still scores well above
+    _OTHER_SIM. The interviewer's synthetic voice IS speech, so it is removed
+    by its own voiceprint when one is known."""
+    ref = _unit(reference)
+    p = np.asarray(partials, dtype=np.float32)
+    p = p / (np.linalg.norm(p, axis=1, keepdims=True) + 1e-9)
+    sim_c = p @ ref
+    keep = np.ones(len(p), dtype=bool)
+    if interviewer is not None and len(interviewer) == len(ref):
+        sim_i = p @ _unit(interviewer)
+        keep = ~((sim_i >= _INTERVIEWER_SIM) & (sim_i > sim_c))
+    other = p[keep & (sim_c < _OTHER_SIM)]
+    removed = int((~keep).sum())
+    if len(other) < _OTHER_MIN_WINDOWS:
+        return {"multi": False, "otherWindows": int(len(other)), "interviewerWindows": removed}
+    centroid = _unit(other.mean(axis=0))
+    coherence = float(np.mean(other @ centroid))
+    return {
+        "multi": coherence >= _OTHER_COHERENCE,
+        "otherWindows": int(len(other)),
+        "coherence": round(coherence, 3),
+        "interviewerWindows": removed,
+    }
+
+
+def embed_only(audio_b64: str, sample_rate: int = 16000) -> dict:
+    """Voiceprint of a clip with no checks — used to learn the interviewer's
+    synthetic voice as heard through this candidate's speaker and mic."""
+    if not voice_available():
+        return {"ok": False, "error": "voice_unavailable"}
+    try:
+        from resemblyzer import preprocess_wav
+
+        wav = preprocess_wav(_pcm16_to_float(audio_b64), source_sr=int(sample_rate) or 16000)
+        if wav.size < int(16000 * 1.5):
+            return {"ok": False, "error": "too_short"}
+        embed = _encoder_get().embed_utterance(wav)
+        return {"ok": True, "embedding": [round(float(x), 6) for x in _unit(embed)]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:150]}
+
+
+def analyze(audio_b64: str, sample_rate: int = 16000, reference=None, interviewer=None) -> dict:
     global _warm
     if not voice_available():
         return {"ok": False, "error": "voice_unavailable"}
@@ -166,8 +232,13 @@ def analyze(audio_b64: str, sample_rate: int = 16000, reference=None) -> dict:
         # Multi-voice: split the per-window partial embeddings into two clusters;
         # if the centroids are dissimilar and both clusters are populated, a
         # second speaker is likely present.
-        multi, voice_count = False, 1
-        if len(partials) >= 4:
+        multi, voice_count, detail = False, 1, None
+        if reference is not None and len(reference) == len(embed):
+            # With an enrolled voiceprint: is there a distinct second person?
+            detail = _other_voice(partials, reference, interviewer)
+            if detail["multi"]:
+                multi, voice_count = True, 2
+        elif len(partials) >= 4:
             from sklearn.cluster import KMeans
 
             km = KMeans(n_clusters=2, n_init=5, random_state=0).fit(partials)
@@ -181,6 +252,7 @@ def analyze(audio_b64: str, sample_rate: int = 16000, reference=None) -> dict:
             "embedding": [round(float(x), 6) for x in embed],
             "multiVoice": multi,
             "voiceCount": voice_count,
+            "multiDetail": detail,
             "duration": duration,
             "quality": quality,
             # Only a clean clip should be trusted to define who the speaker is

@@ -24,7 +24,7 @@ import { isEmail } from '../lib/validators'
 const features = [
   { icon: FileScan, short: 'ATS', title: 'ATS Resume Scanning', desc: 'Resumes are parsed, skills & experience extracted, then matched to the job.',
     points: ['PDF & DOCX parsing', '150+ skill taxonomy', 'Match score per job'], stat: ['92%', 'avg. match accuracy'] },
-  { icon: Bot, short: 'Interview', title: 'AI Interviews', desc: 'Gemini-powered adaptive questions - text or voice, in real time.',
+  { icon: Bot, short: 'Interview', title: 'AI Interviews', desc: 'Adaptive AI questions - text or voice, in real time.',
     points: ['Follow-ups based on answers', 'HR custom questions', 'Field-specific rubrics'], stat: ['10', 'field rubrics'] },
   { icon: ScanFace, short: 'Face', title: 'Face Verification', desc: 'Matched against the registration photo - the real candidate, no proxies.',
     points: ['Live face match', 'Gaze & presence checks', 'Proctoring screenshots'], stat: ['24/7', 'monitoring in session'] },

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { protect, restrictTo } from '../middleware/auth.js'
 import { validate } from '../middleware/validate.js'
 import { startSchema, practiceSchema, answerSchema, askSchema, screenSchema, violationSchema, proctorSchema, screenshotSchema } from '../validators/interview.schema.js'
-import { start, startPractice, answer, ask, begin, screen, finish, frame, voice, voiceCheck, faceCheck, violation, proctorFrame, screenshot, myInterviews, hrSchedule, getInterview } from '../controllers/interview.controller.js'
+import { start, startPractice, answer, ask, begin, screen, finish, frame, voice, interviewerVoice, voiceCheck, faceCheck, violation, proctorFrame, screenshot, myInterviews, hrSchedule, getInterview } from '../controllers/interview.controller.js'
 
 const router = Router()
 
@@ -21,6 +21,7 @@ router.post('/:id/begin', restrictTo('candidate'), begin)
 router.post('/:id/screen', restrictTo('candidate'), validate(screenSchema), screen)
 router.post('/:id/frame', restrictTo('candidate'), frame)
 router.post('/:id/voice', restrictTo('candidate'), voice)
+router.post('/:id/interviewer-voice', restrictTo('candidate'), interviewerVoice)
 router.post('/:id/violation', restrictTo('candidate'), validate(violationSchema), violation)
 router.post('/:id/proctor', restrictTo('candidate'), validate(proctorSchema), proctorFrame)
 router.post('/:id/screenshot', restrictTo('candidate'), validate(screenshotSchema), screenshot)

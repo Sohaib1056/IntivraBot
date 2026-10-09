@@ -205,6 +205,14 @@ function policyOf(interview) {
   }
 }
 
+// Conversation limits per question, so the interview always moves forward.
+// No "tell me more" follow-ups: candidates heard them as extra questions that
+// never counted. The only non-answers are asking for a repeat/clarification
+// or reporting a problem, and those are capped so a question always ends.
+const MAX_FOLLOW_UPS = 0
+const MAX_ASIDES_PER_QUESTION = 2
+const ASIDE_INTENTS = new Set(['clarification', 'issue'])
+
 function previousQA(interview) {
   return interview.questions
     .filter((q) => q.answer)
@@ -501,7 +509,9 @@ export const voice = asyncHandler(async (req, res) => {
 
   // `job` is populated because a violation detected here can terminate the
   // interview, and closeInterview needs the job to score and notify against.
-  const interview = await Interview.findById(req.params.id).select('+voiceRef').populate('job')
+  const interview = await Interview.findById(req.params.id)
+    .select('+voiceRef +interviewerVoiceRef')
+    .populate('job')
   if (!interview) throw new AppError(404, 'Interview not found')
   if (String(interview.candidate) !== String(req.user._id)) throw new AppError(403, 'Not your interview')
   if (interview.status === 'completed') throw new AppError(400, 'Interview already completed')
@@ -512,7 +522,8 @@ export const voice = asyncHandler(async (req, res) => {
   const enrolled = await User.findById(interview.candidate).select('+profile.voiceRef').lean()
   const accountRef = enrolled?.profile?.voiceRef?.length ? enrolled.profile.voiceRef : null
   const ref = accountRef || (interview.voiceRef?.length ? interview.voiceRef : undefined)
-  const result = await aiService.voiceAnalyze(audio, sampleRate || 16000, ref)
+  const interviewerRef = interview.interviewerVoiceRef?.length ? interview.interviewerVoiceRef : undefined
+  const result = await aiService.voiceAnalyze(audio, sampleRate || 16000, ref, interviewerRef)
   if (!result?.ok) {
     return res.json({ success: true, ok: false, reason: result?.error || 'unavailable' })
   }
@@ -581,6 +592,37 @@ export const voice = asyncHandler(async (req, res) => {
     isReference: result.match == null,
     ...(warning ? { warning } : {}),
   })
+})
+
+// POST /api/interviews/:id/interviewer-voice — learn the interviewer's voice.
+//
+// The page records what its microphone hears while the interviewer is
+// talking — which is the TTS voice through this candidate's own speaker and
+// room. Its voiceprint lets the multi-voice check discard leakage of the
+// interviewer instead of calling it a second person. Learned once.
+export const interviewerVoice = asyncHandler(async (req, res) => {
+  const { audio, sampleRate } = req.body
+  if (!mongoose.isValidObjectId(req.params.id)) throw new AppError(400, 'Invalid interview id')
+  if (!audio) throw new AppError(400, 'No audio provided')
+  const interview = await Interview.findById(req.params.id).select('candidate status +interviewerVoiceRef')
+  if (!interview) throw new AppError(404, 'Interview not found')
+  if (String(interview.candidate) !== String(req.user._id)) throw new AppError(403, 'Not your interview')
+  if (interview.interviewerVoiceRef?.length) return res.json({ success: true, learned: true })
+
+  const result = await aiService.voiceEmbed(audio, sampleRate || 16000)
+  if (!result?.ok) return res.json({ success: true, learned: false, reason: result?.error || 'unavailable' })
+
+  // Never learn the candidate's own voice as the interviewer's (they talked
+  // over it): that would hide them from their own checks.
+  const me = await User.findById(interview.candidate).select('+profile.voiceRef').lean()
+  const ref = me?.profile?.voiceRef
+  if (ref?.length === result.embedding.length) {
+    const dot = ref.reduce((s, v, i) => s + v * result.embedding[i], 0)
+    const norm = Math.hypot(...ref) * Math.hypot(...result.embedding)
+    if (norm && dot / norm >= 0.6) return res.json({ success: true, learned: false, reason: 'candidate_voice' })
+  }
+  await Interview.updateOne({ _id: interview._id }, { $set: { interviewerVoiceRef: result.embedding } })
+  res.json({ success: true, learned: true })
 })
 
 // POST /api/interviews/voice-check — verify the speaker BEFORE the interview.
@@ -828,7 +870,14 @@ export const answer = asyncHandler(async (req, res) => {
   const interview = await Interview.findById(req.params.id).populate('job')
   if (!interview) throw new AppError(404, 'Interview not found')
   if (String(interview.candidate) !== String(req.user._id)) throw new AppError(403, 'Not your interview')
-  if (interview.status === 'completed') throw new AppError(400, 'Interview already completed')
+  // Closed under the candidate (a violation from another request, timeout…).
+  // 410 + the reason lets the page show the right ending instead of an error.
+  if (interview.status === 'completed') {
+    throw new AppError(410, 'This interview has already ended.', {
+      endedReason: interview.endedReason || 'completed',
+      terminatedFor: interview.terminatedFor || '',
+    })
+  }
 
   // The gate that actually matters. Checked here as well as on /start because
   // /start is not the only way back in: a tab left open overnight still holds a
@@ -893,8 +942,24 @@ export const answer = asyncHandler(async (req, res) => {
   // asks a follow-up hasn't moved on, so nothing is scored and no question is
   // consumed. The partial answer is kept as a turn so the follow-up has it in
   // context and the candidate isn't made to repeat themselves.
-  const unfinished = talk.intent === 'answer' && talk.complete === false && Boolean(talk.reply)
-  if (talk.intent !== 'answer' || unfinished) {
+  // One follow-up per question at most. Without a cap the model kept calling
+  // every answer "incomplete" and asked for more detail forever, so the
+  // interview never got past question 1.
+  const extensions = (interview.turns || []).filter(
+    (t) => t.role === 'candidate' && t.order === q.order && t.intent === 'answer_extension'
+  )
+  const unfinished =
+    talk.intent === 'answer' && talk.complete === false && Boolean(talk.reply) &&
+    extensions.length < MAX_FOLLOW_UPS
+  const asides = (interview.turns || []).filter((t) => t.role === 'candidate' && t.order === q.order)
+  // Once the interviewer has asked a follow-up, whatever comes next IS the
+  // answer to it. The classifier sometimes read that reply as a question, so
+  // one question took three turns and felt like several uncounted questions.
+  const afterFollowUp = extensions.length > 0
+  if (
+    (ASIDE_INTENTS.has(talk.intent) && !afterFollowUp && asides.length < MAX_ASIDES_PER_QUESTION) ||
+    unfinished
+  ) {
     const now = new Date()
     await Interview.updateOne(
       { _id: interview._id },
@@ -931,7 +996,10 @@ export const answer = asyncHandler(async (req, res) => {
 
   // They answered. If they also slipped a question in, the AI's aside is kept
   // as a turn so it can be spoken alongside the next question.
-  const scorable = (talk.answer || answerText).trim() || answerText
+  // Score the whole answer: what they said before the follow-up plus this part.
+  const scorable = [...extensions.map((t) => t.text), (talk.answer || answerText).trim() || answerText]
+    .join(' ')
+    .trim()
 
   // Record the answer before either AI call, so the question generator can see
   // it in previousQA and ask a genuine follow-up.
@@ -978,15 +1046,6 @@ export const answer = asyncHandler(async (req, res) => {
   // seconds, during which the monitoring loop appends face and voice samples;
   // a full interview.save() here would write back the stale in-memory copy
   // loaded before that and silently drop every sample captured meanwhile.
-  // An answer that carried a question with it: keep both sides of the aside so
-  // the report shows what they asked and the UI can speak the reply.
-  const asideTurns = talk.reply
-    ? [
-        { role: 'candidate', text: answerText, intent: 'question', order: q.order, at: new Date() },
-        { role: 'ai', text: talk.reply, intent: '', order: q.order, at: new Date() },
-      ]
-    : []
-
   await Interview.updateOne(
     { _id: interview._id },
     {
@@ -997,15 +1056,13 @@ export const answer = asyncHandler(async (req, res) => {
         // camera may have been denied, and neither should time them out.
         lastSeenAt: new Date(),
       },
-      ...(asideTurns.length ? { $push: { turns: { $each: asideTurns } } } : {}),
     }
   )
 
   res.json({
     success: true,
-    reply: talk.reply || '',
-    score: q.score,
-    feedback: q.feedback,
+    reply: '',
+    // Scores are for the employer's report, not shown live to the candidate.
     nextQuestion,
     done,
     progress: { answered: answeredCount, total: interview.totalQuestions },

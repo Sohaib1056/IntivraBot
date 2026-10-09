@@ -267,6 +267,9 @@ const interviewSchema = new Schema(
     // Voice biometrics (Phase 6)
     voiceSamples: { type: [voiceSampleSchema], default: [] },
     voiceRef: { type: [Number], default: undefined, select: false }, // reference voiceprint (first clip)
+    // The interviewer's synthetic voice as this candidate's mic hears it, so
+    // speaker leakage is never mistaken for a second person.
+    interviewerVoiceRef: { type: [Number], default: undefined, select: false },
     voiceMatchScore: { type: Number, min: 0, max: 100, default: null },
     voiceFlags: { type: Number, default: 0 }, // clips with speaker mismatch or multiple voices
 
